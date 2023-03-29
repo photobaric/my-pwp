@@ -3,7 +3,6 @@ use anyhow::ensure;
 // Page 4-20, Table 4-9
 #[repr(u8)]
 #[derive(Debug, Copy, Clone)]
-#[allow(dead_code)]
 pub enum ByteReg {
     AL = 0b000,
     CL = 0b001,
@@ -18,7 +17,6 @@ pub enum ByteReg {
 // Page 4-20, Table 4-9
 #[repr(u8)]
 #[derive(Debug, Copy, Clone)]
-#[allow(dead_code)]
 pub enum WordReg {
     AX = 0b000,
     CX = 0b001,
@@ -33,7 +31,6 @@ pub enum WordReg {
 // Page 4-21, "Segment register code"
 #[repr(u8)]
 #[derive(Debug, Copy, Clone)]
-#[allow(dead_code)]
 pub enum SegmentReg {
     ES = 0b00,
     CS = 0b01,
@@ -165,40 +162,6 @@ impl ::std::fmt::Display for IndexReg {
 // TODO(photobaric): Add layer of nesting to ModRM for Memory and see if it increases the size of the struct
 // TODO(photobaric): Add `is_word` to ModRM and see if it increases the size of the struct
 // TODO(photobaric): Const assert sizes
-
-#[derive(Debug, Clone)]
-pub enum MemoryOperand {
-    // MOD=00, RM=110
-    // Page 2-69
-    DirectAddressing(u16),
-
-    // MOD=00, RM!=110
-    // Page 2-69 thru Page 2-70
-    RegisterIndirectAddressingViaBaseReg(BaseReg),
-    RegisterIndirectAddressingViaIndexReg(IndexReg),
-
-    // MOD=01 or MOD=10, RM=11x
-    // Page 2-70
-    // {BX,BP} + displacement (8 or 16 bit immediate)
-    // Used for addressing a field in a struct
-    BasedAddressing(BaseReg, u16),
-
-    // MOD=01 or MOD=10, RM=10x
-    // Page 2-70 thru Page-2-71
-    // {SI,DI} + displacement (8 or 16 bit immediate)
-    // Used for addressing an element of an array
-    IndexedAddressing(IndexReg, u16),
-
-    // MOD=01 or MOD=10, RM=0xx
-    // Page 2-71
-    // {BX,BP} + {SI,DI} + displacement (8 or 16 bit immediate)
-    // Used for addressing an element of a stack array
-    // (base is stack pointer, displacement is where in the stack, index is index into array),
-    // or an element of an array inside a struct
-    // (base is struct pointer, displacement is which field in the struct, index is index into array)
-    BasedIndexedAddressing(BaseReg, IndexReg, u16),
-    BasedIndexedAddressingNoDisp(BaseReg, IndexReg), // TODO(photobaric): What is the use case here?
-}
 
 // 8086 Addressing Modes:
 // This is organized in accordance to the taxonomy described in Section 2.8
