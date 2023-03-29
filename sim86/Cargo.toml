@@ -10,10 +10,10 @@ An 8086/8088 emulator with full support for 16-bit x86.
 """
 
 [dependencies]
-anyhow = "=1.0.69"
-thiserror = "=1.0.40"
-clap = { version = "=4.1.8", features = ["derive"] }
-static_assertions = "=1.1.0"
+anyhow = "1.0.69"
+thiserror = "1.0.40"
+clap = { version = "4.1.8", features = ["derive"] }
+static_assertions = "1.1.0"
 
 [dev-dependencies]
 similar = "=2.2.1"
