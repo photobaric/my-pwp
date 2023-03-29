@@ -633,6 +633,8 @@ pub enum Instruction {
     },
 }
 
+static_assertions::assert_eq_size!(Instruction, [u8; 12]);
+
 // top 2 bits are zero, next 3 bits for segment override prefix, next 2 bits for rep, last 1 bit for lock
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PrefixState(u8);
@@ -677,6 +679,7 @@ impl PrefixState {
 }
 
 pub struct CompleteInstruction(pub Instruction, pub PrefixState);
+static_assertions::assert_eq_size!(CompleteInstruction, [u8; 14]);
 
 impl ::std::fmt::Display for CompleteInstruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

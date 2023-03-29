@@ -2,6 +2,9 @@
 name = "sim86"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/photobaric/my-pwp"
+license = "MIT OR Apache-2.0"
+keywords = ["x86", "8086", "8088", "emulator", "disassembler"]
 
 [dependencies]
 anyhow = "=1.0.69"
