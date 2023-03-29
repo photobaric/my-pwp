@@ -1,0 +1,14 @@
+[package]
+name = "sim86"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "=1.0.69"
+thiserror = "=1.0.40"
+clap = { version = "=4.1.8", features = ["derive"] }
+
+[dev-dependencies]
+similar = "=2.2.1"
+console = "=0.15.5"
+uuid = { version = "=1.3.0", features = ["v4"] }
