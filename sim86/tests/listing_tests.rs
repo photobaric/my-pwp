@@ -298,6 +298,81 @@ fn listing_0045_challenge_register_movs() {
 }
 
 #[test]
+fn listing_0046_add_sub_cmp() {
+    const BINARY: &[u8] = include_bytes!("./testdata/listing_0046_add_sub_cmp");
+    const ASM: &str = include_str!("./testdata/listing_0046_add_sub_cmp.asm");
+    const TRACE: &str = include_str!("./testdata/listing_0046_add_sub_cmp.txt");
+
+    test_reassembly(BINARY, ASM);
+    test_execution(
+        BINARY,
+        TRACE,
+        r"--- test\listing_0046_add_sub_cmp execution ---",
+        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+    );
+}
+
+#[test]
+fn listing_0047_add_sub_cmp() {
+    const BINARY: &[u8] = include_bytes!("./testdata/listing_0047_challenge_flags");
+    const ASM: &str = include_str!("./testdata/listing_0047_challenge_flags.asm");
+    const TRACE: &str = include_str!("./testdata/listing_0047_challenge_flags.txt");
+
+    test_reassembly(BINARY, ASM);
+    test_execution(
+        BINARY,
+        TRACE,
+        r"--- test\listing_0047_challenge_flags execution ---",
+        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+    );
+}
+
+#[test]
+fn listing_0048_ip_register() {
+    const BINARY: &[u8] = include_bytes!("./testdata/listing_0048_ip_register");
+    const ASM: &str = include_str!("./testdata/listing_0048_ip_register.asm");
+    const TRACE: &str = include_str!("./testdata/listing_0048_ip_register.txt");
+
+    test_reassembly(BINARY, ASM);
+    test_execution(
+        BINARY,
+        TRACE,
+        r"--- test\listing_0048_ip_register execution ---",
+        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+    );
+}
+
+#[test]
+fn listing_0049_conditional_jumps() {
+    const BINARY: &[u8] = include_bytes!("./testdata/listing_0049_conditional_jumps");
+    const ASM: &str = include_str!("./testdata/listing_0049_conditional_jumps.asm");
+    const TRACE: &str = include_str!("./testdata/listing_0049_conditional_jumps.txt");
+
+    test_reassembly(BINARY, ASM);
+    test_execution(
+        BINARY,
+        TRACE,
+        r"--- test\listing_0049_conditional_jumps execution ---",
+        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+    );
+}
+
+#[test]
+fn listing_0050_challenge_jumps() {
+    const BINARY: &[u8] = include_bytes!("./testdata/listing_0050_challenge_jumps");
+    const ASM: &str = include_str!("./testdata/listing_0050_challenge_jumps.asm");
+    const TRACE: &str = include_str!("./testdata/listing_0050_challenge_jumps.txt");
+
+    test_reassembly(BINARY, ASM);
+    test_execution(
+        BINARY,
+        TRACE,
+        r"--- test\listing_0050_challenge_jumps execution ---",
+        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+    );
+}
+
+#[test]
 fn test_mov_acc_mem() {
     const BINARY: &[u8] = include_bytes!("./testdata/test_mov_acc_mem");
     const ASM: &str = include_str!("./testdata/test_mov_acc_mem.asm");
