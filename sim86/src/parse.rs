@@ -1,8 +1,8 @@
 use std::io::{Bytes, Read};
 
 use crate::model::{
-    BaseReg, ByteOrWord, ByteReg, CompleteInstruction, IndexReg, Instruction, ModRM, PrefixState,
-    Reg, SegmentReg, WordReg,
+    BaseReg, ByteOrWord, ByteReg, IndexReg, Instruction, MemAddressingMode, MemOperand,
+    PrefixState, PrefixedInstruction, RegMemOperand, RegOperand, SegmentReg, WordReg,
 };
 
 macro_rules! next_byte_or_err {
@@ -25,19 +25,19 @@ macro_rules! next_byte_or_panic {
     };
 }
 
-fn parse_general_purpose_reg(is_word: bool, reg: u8) -> Reg {
+fn parse_general_purpose_reg(is_word: bool, reg: u8) -> RegOperand {
     if is_word {
-        Reg::WordReg(reg.try_into().unwrap())
+        RegOperand::Reg16(reg.try_into().unwrap())
     } else {
-        Reg::ByteReg(reg.try_into().unwrap())
+        RegOperand::Reg8(reg.try_into().unwrap())
     }
 }
 
-fn parse_accumulator_reg(is_word: bool) -> Reg {
+fn parse_accumulator_reg(is_word: bool) -> RegOperand {
     if is_word {
-        Reg::WordReg(WordReg::AX)
+        RegOperand::Reg16(WordReg::AX)
     } else {
-        Reg::ByteReg(ByteReg::AL)
+        RegOperand::Reg8(ByteReg::AL)
     }
 }
 
@@ -66,29 +66,41 @@ fn parse_modrm<R: Read>(
     is_word: bool,
     b2: u8,
     input: &mut Bytes<R>,
-) -> Result<ModRM, ParseModRMError> {
+) -> Result<RegMemOperand, ParseModRMError> {
     let mode = b2 >> 6;
     let rm = b2 & 0b00000111;
-    let modrm: ModRM = match mode {
-        0b00 => match rm {
-            0b000 => ModRM::BasedIndexedAddressingNoDisp(BaseReg::BX, IndexReg::SI),
-            0b001 => ModRM::BasedIndexedAddressingNoDisp(BaseReg::BX, IndexReg::DI),
-            0b010 => ModRM::BasedIndexedAddressingNoDisp(BaseReg::BP, IndexReg::SI),
-            0b011 => ModRM::BasedIndexedAddressingNoDisp(BaseReg::BP, IndexReg::DI),
-            0b100 => ModRM::RegisterIndirectAddressingViaIndexReg(IndexReg::SI),
-            0b101 => ModRM::RegisterIndirectAddressingViaIndexReg(IndexReg::DI),
-            0b110 => {
-                // Direct addressing special case
-                let disp_lo =
-                    next_byte_or_err!(input, ParseModRMError::DirectAddressingMissingDispLoByte);
-                let disp_hi =
-                    next_byte_or_err!(input, ParseModRMError::DirectAddressingMissingDispHiByte);
-                let direct_address = (disp_hi as u16) << 8 | (disp_lo as u16);
-                ModRM::DirectAddressing(direct_address)
-            }
-            0b111 => ModRM::RegisterIndirectAddressingViaBaseReg(BaseReg::BX),
-            _ => unreachable!(),
-        },
+    let modrm: RegMemOperand = match mode {
+        0b00 => {
+            let mem_addressing_mode = match rm {
+                0b000 => MemAddressingMode::BasedIndexedAddressingNoDisp(BaseReg::BX, IndexReg::SI),
+                0b001 => MemAddressingMode::BasedIndexedAddressingNoDisp(BaseReg::BX, IndexReg::DI),
+                0b010 => MemAddressingMode::BasedIndexedAddressingNoDisp(BaseReg::BP, IndexReg::SI),
+                0b011 => MemAddressingMode::BasedIndexedAddressingNoDisp(BaseReg::BP, IndexReg::DI),
+                0b100 => MemAddressingMode::RegisterIndirectAddressingViaIndexReg(IndexReg::SI),
+                0b101 => MemAddressingMode::RegisterIndirectAddressingViaIndexReg(IndexReg::DI),
+                0b110 => {
+                    // Direct addressing special case
+                    let disp_lo = next_byte_or_err!(
+                        input,
+                        ParseModRMError::DirectAddressingMissingDispLoByte
+                    );
+                    let disp_hi = next_byte_or_err!(
+                        input,
+                        ParseModRMError::DirectAddressingMissingDispHiByte
+                    );
+                    let direct_address = (disp_hi as u16) << 8 | (disp_lo as u16);
+                    MemAddressingMode::DirectAddressing(direct_address)
+                }
+                0b111 => MemAddressingMode::RegisterIndirectAddressingViaBaseReg(BaseReg::BX),
+                _ => unreachable!(),
+            };
+            let mem_operand = if is_word {
+                MemOperand::Mem16(mem_addressing_mode)
+            } else {
+                MemOperand::Mem8(mem_addressing_mode)
+            };
+            RegMemOperand::Mem(mem_operand)
+        }
         0b01 => {
             let d8 = next_byte_or_err!(
                 input,
@@ -109,17 +121,23 @@ fn parse_modrm<R: Read>(
                 // ret
                 d8 as i8 as u16
             };
-            match rm {
-                0b000 => ModRM::BasedIndexedAddressing(BaseReg::BX, IndexReg::SI, d16),
-                0b001 => ModRM::BasedIndexedAddressing(BaseReg::BX, IndexReg::DI, d16),
-                0b010 => ModRM::BasedIndexedAddressing(BaseReg::BP, IndexReg::SI, d16),
-                0b011 => ModRM::BasedIndexedAddressing(BaseReg::BP, IndexReg::DI, d16),
-                0b100 => ModRM::IndexedAddressing(IndexReg::SI, d16),
-                0b101 => ModRM::IndexedAddressing(IndexReg::DI, d16),
-                0b110 => ModRM::BasedAddressing(BaseReg::BP, d16),
-                0b111 => ModRM::BasedAddressing(BaseReg::BX, d16),
+            let mem_addressing_mode = match rm {
+                0b000 => MemAddressingMode::BasedIndexedAddressing(BaseReg::BX, IndexReg::SI, d16),
+                0b001 => MemAddressingMode::BasedIndexedAddressing(BaseReg::BX, IndexReg::DI, d16),
+                0b010 => MemAddressingMode::BasedIndexedAddressing(BaseReg::BP, IndexReg::SI, d16),
+                0b011 => MemAddressingMode::BasedIndexedAddressing(BaseReg::BP, IndexReg::DI, d16),
+                0b100 => MemAddressingMode::IndexedAddressing(IndexReg::SI, d16),
+                0b101 => MemAddressingMode::IndexedAddressing(IndexReg::DI, d16),
+                0b110 => MemAddressingMode::BasedAddressing(BaseReg::BP, d16),
+                0b111 => MemAddressingMode::BasedAddressing(BaseReg::BX, d16),
                 _ => unreachable!(),
-            }
+            };
+            let mem_operand = if is_word {
+                MemOperand::Mem16(mem_addressing_mode)
+            } else {
+                MemOperand::Mem8(mem_addressing_mode)
+            };
+            RegMemOperand::Mem(mem_operand)
         }
         0b10 => {
             let disp_lo = next_byte_or_err!(
@@ -131,19 +149,28 @@ fn parse_modrm<R: Read>(
                 ParseModRMError::SixteenBitDisplacementMissingDispHiByte
             );
             let d16 = (disp_hi as u16) << 8 | (disp_lo as u16);
-            match rm {
-                0b000 => ModRM::BasedIndexedAddressing(BaseReg::BX, IndexReg::SI, d16),
-                0b001 => ModRM::BasedIndexedAddressing(BaseReg::BX, IndexReg::DI, d16),
-                0b010 => ModRM::BasedIndexedAddressing(BaseReg::BP, IndexReg::SI, d16),
-                0b011 => ModRM::BasedIndexedAddressing(BaseReg::BP, IndexReg::DI, d16),
-                0b100 => ModRM::IndexedAddressing(IndexReg::SI, d16),
-                0b101 => ModRM::IndexedAddressing(IndexReg::DI, d16),
-                0b110 => ModRM::BasedAddressing(BaseReg::BP, d16),
-                0b111 => ModRM::BasedAddressing(BaseReg::BX, d16),
+            let mem_addressing_mode = match rm {
+                0b000 => MemAddressingMode::BasedIndexedAddressing(BaseReg::BX, IndexReg::SI, d16),
+                0b001 => MemAddressingMode::BasedIndexedAddressing(BaseReg::BX, IndexReg::DI, d16),
+                0b010 => MemAddressingMode::BasedIndexedAddressing(BaseReg::BP, IndexReg::SI, d16),
+                0b011 => MemAddressingMode::BasedIndexedAddressing(BaseReg::BP, IndexReg::DI, d16),
+                0b100 => MemAddressingMode::IndexedAddressing(IndexReg::SI, d16),
+                0b101 => MemAddressingMode::IndexedAddressing(IndexReg::DI, d16),
+                0b110 => MemAddressingMode::BasedAddressing(BaseReg::BP, d16),
+                0b111 => MemAddressingMode::BasedAddressing(BaseReg::BX, d16),
                 _ => unreachable!(),
-            }
+            };
+            let mem_operand = if is_word {
+                MemOperand::Mem16(mem_addressing_mode)
+            } else {
+                MemOperand::Mem8(mem_addressing_mode)
+            };
+            RegMemOperand::Mem(mem_operand)
         }
-        0b11 => ModRM::Reg(parse_general_purpose_reg(is_word, rm)),
+        0b11 => {
+            let reg_operand = parse_general_purpose_reg(is_word, rm);
+            RegMemOperand::Reg(reg_operand)
+        }
         _ => unreachable!(),
     };
     Ok(modrm)
@@ -230,13 +257,10 @@ fn parse_0b1011xxxx_mov_immediate_to_reg<R: Read>(b1: u8, input: &mut Bytes<R>) 
     let is_word = b1 & 0b1000 != 0;
     let reg = b1 & 0b111;
 
-    let reg = parse_general_purpose_reg(is_word, reg);
+    let rm = RegMemOperand::Reg(parse_general_purpose_reg(is_word, reg));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::MovImmediateToRm {
-        rm: ModRM::Reg(reg),
-        immediate,
-    }
+    Instruction::MovImmediateToRm { rm, immediate }
 }
 
 fn parse_0b101000xx_mov_mem_to_from_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
@@ -250,7 +274,13 @@ fn parse_0b101000xx_mov_mem_to_from_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R
         let addr_lo = next_byte_or_panic!(input);
         let addr_hi = next_byte_or_panic!(input);
         let direct_address = (addr_hi as u16) << 8 | (addr_lo as u16);
-        ModRM::DirectAddressing(direct_address)
+        let mem_addressing_mode = MemAddressingMode::DirectAddressing(direct_address);
+        let mem_operand = if is_word {
+            MemOperand::Mem16(mem_addressing_mode)
+        } else {
+            MemOperand::Mem8(mem_addressing_mode)
+        };
+        RegMemOperand::Mem(mem_operand)
     };
 
     Instruction::MovRmToFromReg {
@@ -266,7 +296,7 @@ fn parse_0b100011x0_mov_rm_to_from_segment_reg<R: Read>(
 ) -> Instruction {
     // MOV - Register/memory to/from segment register
 
-    let is_reg_dst = b1 & 0b10 != 0;
+    let is_segment_reg_dst = b1 & 0b10 != 0;
 
     let b2 = next_byte_or_panic!(input);
 
@@ -275,9 +305,9 @@ fn parse_0b100011x0_mov_rm_to_from_segment_reg<R: Read>(
     let segment_reg = SegmentReg::try_from(sr).unwrap();
     let rm = parse_modrm(true, b2, input).unwrap();
 
-    Instruction::MovRmToFromReg {
-        is_reg_dst,
-        reg: Reg::SegmentReg(segment_reg),
+    Instruction::MovRmToFromSegmentReg {
+        is_segment_reg_dst,
+        segment_reg,
         rm,
     }
 }
@@ -306,13 +336,10 @@ fn parse_0b0000010x_add_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<
 
     let is_word = b1 & 1 != 0;
 
-    let acc_reg = parse_accumulator_reg(is_word);
+    let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::AddImmediateToRm {
-        rm: ModRM::Reg(acc_reg),
-        immediate,
-    }
+    Instruction::AddImmediateToRm { rm, immediate }
 }
 
 fn parse_0b000100xx_adc_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
@@ -335,20 +362,16 @@ fn parse_0b000100xx_adc_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
 fn parse_0b0001010x_adc_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
     let is_word = b1 & 1 != 0;
 
-    let acc_reg = parse_accumulator_reg(is_word);
+    let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::AdcImmediateToRm {
-        rm: ModRM::Reg(acc_reg),
-        immediate,
-    }
+    Instruction::AdcImmediateToRm { rm, immediate }
 }
 
 fn parse_0b01000xxx_inc_word_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
     let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Inc {
-        is_word: true,
-        rm: ModRM::Reg(Reg::WordReg(word_reg)),
+        rm: RegMemOperand::Reg(RegOperand::Reg16(word_reg)),
     }
 }
 
@@ -384,13 +407,10 @@ fn parse_0b0010110x_sub_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<
 
     let is_word = b1 & 1 != 0;
 
-    let acc_reg = parse_accumulator_reg(is_word);
+    let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::SubImmediateToRm {
-        rm: ModRM::Reg(acc_reg),
-        immediate,
-    }
+    Instruction::SubImmediateToRm { rm, immediate }
 }
 
 fn parse_0b000110xx_sbb_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
@@ -413,20 +433,16 @@ fn parse_0b000110xx_sbb_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
 fn parse_0b0001110x_sbb_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
     let is_word = b1 & 1 != 0;
 
-    let acc_reg = parse_accumulator_reg(is_word);
+    let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::SbbImmediateToRm {
-        rm: ModRM::Reg(acc_reg),
-        immediate,
-    }
+    Instruction::SbbImmediateToRm { rm, immediate }
 }
 
 fn parse_0b01001xxx_dec_word_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
     let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Dec {
-        is_word: true,
-        rm: ModRM::Reg(Reg::WordReg(word_reg)),
+        rm: RegMemOperand::Reg(RegOperand::Reg16(word_reg)),
     }
 }
 
@@ -457,13 +473,10 @@ fn parse_0b0011110x_cmp_immediate_with_acc_reg<R: Read>(
 
     let is_word = b1 & 0b01 != 0;
 
-    let acc_reg = parse_accumulator_reg(is_word);
+    let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::CmpImmediateWithRm {
-        rm: ModRM::Reg(acc_reg),
-        immediate,
-    }
+    Instruction::CmpImmediateWithRm { rm, immediate }
 }
 
 fn parse_0b100000xx_combine_immediate_to_rm<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
@@ -521,12 +534,12 @@ fn parse_0b1111011x_test_not_neg_mul_imul_div_idiv<R: Read>(
             Instruction::TestImmediateToRm { rm, immediate }
         }
         0b001 => panic!("unused"),
-        0b010 => Instruction::Not { is_word, rm },
-        0b011 => Instruction::Neg { is_word, rm },
-        0b100 => Instruction::Mul { is_word, rm },
-        0b101 => Instruction::Imul { is_word, rm },
-        0b110 => Instruction::Div { is_word, rm },
-        0b111 => Instruction::Idiv { is_word, rm },
+        0b010 => Instruction::Not { rm },
+        0b011 => Instruction::Neg { rm },
+        0b100 => Instruction::Mul { rm },
+        0b101 => Instruction::Imul { rm },
+        0b110 => Instruction::Div { rm },
+        0b111 => Instruction::Idiv { rm },
         _ => unreachable!(),
     }
 }
@@ -557,14 +570,14 @@ fn parse_0b110100xx_shift<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction 
     let b2 = next_byte_or_panic!(input);
     let rm = parse_modrm(is_word, b2, input).unwrap();
     match (b2 >> 3) & 0b111 {
-        0b000 => Instruction::Rol { count, is_word, rm },
-        0b001 => Instruction::Ror { count, is_word, rm },
-        0b010 => Instruction::Rcl { count, is_word, rm },
-        0b011 => Instruction::Rcr { count, is_word, rm },
-        0b100 => Instruction::ShlSal { count, is_word, rm },
-        0b101 => Instruction::Shr { count, is_word, rm },
+        0b000 => Instruction::Rol { count, rm },
+        0b001 => Instruction::Ror { count, rm },
+        0b010 => Instruction::Rcl { count, rm },
+        0b011 => Instruction::Rcr { count, rm },
+        0b100 => Instruction::ShlSal { count, rm },
+        0b101 => Instruction::Shr { count, rm },
         0b110 => panic!("unused"),
-        0b111 => Instruction::Sar { count, is_word, rm },
+        0b111 => Instruction::Sar { count, rm },
         _ => unreachable!(),
     }
 }
@@ -638,13 +651,10 @@ fn parse_0b001100xx_xor_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
 fn parse_0b0010010x_and_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
     let is_word = b1 & 1 != 0;
 
-    let acc_reg = parse_accumulator_reg(is_word);
+    let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::AndImmediateToRm {
-        rm: ModRM::Reg(acc_reg),
-        immediate,
-    }
+    Instruction::AndImmediateToRm { rm, immediate }
 }
 
 fn parse_0b1010100x_test_immediate_to_acc_reg<R: Read>(
@@ -653,37 +663,28 @@ fn parse_0b1010100x_test_immediate_to_acc_reg<R: Read>(
 ) -> Instruction {
     let is_word = b1 & 1 != 0;
 
-    let acc_reg = parse_accumulator_reg(is_word);
+    let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::TestImmediateToRm {
-        rm: ModRM::Reg(acc_reg),
-        immediate,
-    }
+    Instruction::TestImmediateToRm { rm, immediate }
 }
 
 fn parse_0b0000110x_or_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
     let is_word = b1 & 1 != 0;
 
-    let acc_reg = parse_accumulator_reg(is_word);
+    let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::OrImmediateToRm {
-        rm: ModRM::Reg(acc_reg),
-        immediate,
-    }
+    Instruction::OrImmediateToRm { rm, immediate }
 }
 
 fn parse_0b0011010x_xor_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
     let is_word = b1 & 1 != 0;
 
-    let acc_reg = parse_accumulator_reg(is_word);
+    let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::XorImmediateToRm {
-        rm: ModRM::Reg(acc_reg),
-        immediate,
-    }
+    Instruction::XorImmediateToRm { rm, immediate }
 }
 
 fn parse_0b1010010x_movs<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
@@ -925,17 +926,15 @@ fn parse_0b11011xxx_esc<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
 }
 
 fn parse_0b01010xxx_push_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
-    let reg = b1 & 0b111;
-    let word_reg = Reg::WordReg(reg.try_into().unwrap());
+    let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Push {
-        rm: ModRM::Reg(word_reg),
+        rm: RegMemOperand::Reg(RegOperand::Reg16(word_reg)),
     }
 }
 
 fn parse_0b000xx110_push_segment_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
-    let sr = (b1 & 0b11000) >> 3;
-    let sr = Reg::SegmentReg(sr.try_into().unwrap());
-    Instruction::Push { rm: ModRM::Reg(sr) }
+    let segment_reg = SegmentReg::try_from((b1 & 0b11000) >> 3).unwrap();
+    Instruction::PushSegmentReg { segment_reg }
 }
 
 fn parse_0b10001111_pop_rm<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
@@ -945,17 +944,15 @@ fn parse_0b10001111_pop_rm<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instructio
 }
 
 fn parse_0b01011xxx_pop_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
-    let reg = b1 & 0b111;
-    let word_reg = Reg::WordReg(reg.try_into().unwrap());
+    let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Pop {
-        rm: ModRM::Reg(word_reg),
+        rm: RegMemOperand::Reg(RegOperand::Reg16(word_reg)),
     }
 }
 
 fn parse_0b000xx111_pop_segment_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
-    let sr = (b1 & 0b11000) >> 3;
-    let sr = Reg::SegmentReg(sr.try_into().unwrap());
-    Instruction::Pop { rm: ModRM::Reg(sr) }
+    let segment_reg = SegmentReg::try_from((b1 & 0b11000) >> 3).unwrap();
+    Instruction::PopSegmentReg { segment_reg }
 }
 
 fn parse_0b1000011x_xchg_rm_to_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
@@ -968,11 +965,10 @@ fn parse_0b1000011x_xchg_rm_to_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Ins
 }
 
 fn parse_0b10010xxx_xchg_reg_to_acc_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
-    let reg = b1 & 0b111;
-    let word_reg = Reg::WordReg(reg.try_into().unwrap());
+    let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Xchg {
-        reg: Reg::WordReg(WordReg::AX),
-        rm: ModRM::Reg(word_reg),
+        reg: RegOperand::Reg16(WordReg::AX),
+        rm: RegMemOperand::Reg(RegOperand::Reg16(word_reg)),
     }
 }
 
@@ -1047,8 +1043,8 @@ fn parse_0b1111111x_inc_dec_call_jmp_push_rm<R: Read>(b1: u8, input: &mut Bytes<
     let b2 = next_byte_or_panic!(input);
     let rm = parse_modrm(is_word, b2, input).unwrap();
     match (b2 >> 3) & 0b111 {
-        0b000 => Instruction::Inc { is_word, rm },
-        0b001 => Instruction::Dec { is_word, rm },
+        0b000 => Instruction::Inc { rm },
+        0b001 => Instruction::Dec { rm },
         0b010 => Instruction::CallIndirect { rm },
         0b011 => Instruction::CallIndirectIntersegment { rm },
         0b100 => Instruction::JmpIndirect { rm },
@@ -1376,11 +1372,11 @@ fn parse_0b001xx110_segment_override_prefix(b1: u8, prefix_state: PrefixState) -
     prefix_state.activate_segment_override_prefix(sr)
 }
 
-pub fn parse_complete_instruction<R: Read, F: FnMut(u8, &mut Bytes<R>) -> Instruction>(
+pub fn parse_prefixed_instruction<R: Read, F: FnMut(u8, &mut Bytes<R>) -> Instruction>(
     mut b1: u8,
     input: &mut Bytes<R>,
     mut parse_func: F,
-) -> CompleteInstruction {
+) -> PrefixedInstruction {
     let mut prefix_state = PrefixState::default();
     loop {
         prefix_state = match b1 {
@@ -1396,7 +1392,7 @@ pub fn parse_complete_instruction<R: Read, F: FnMut(u8, &mut Bytes<R>) -> Instru
 
             b1 => {
                 let instruction = parse_func(b1, input);
-                return CompleteInstruction(instruction, prefix_state);
+                return PrefixedInstruction(instruction, prefix_state);
             }
         };
         b1 = next_byte_or_panic!(input);

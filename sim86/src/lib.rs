@@ -14,7 +14,7 @@ pub fn disassemble<R: Read, W: Write>(input: R, output: &mut W) {
             None => return,
         };
         let instruction =
-            parse::parse_complete_instruction(b1, &mut input, parse::parse_instruction);
+            parse::parse_prefixed_instruction(b1, &mut input, parse::parse_instruction);
         writeln!(output, "{}", instruction).unwrap();
     }
 }
@@ -30,7 +30,7 @@ pub fn disassemble_via_jump_table<R: Read, W: Write>(input: R, output: &mut W) {
             Some(Err(e)) => panic!("Failed to get next byte due to IO error - {}", e),
             None => return,
         };
-        let instruction = parse::parse_complete_instruction(b1, &mut input, |b1, input| {
+        let instruction = parse::parse_prefixed_instruction(b1, &mut input, |b1, input| {
             let parse_function: parse::ParseFunc<R> = jump_table[b1 as usize];
             parse_function(b1, input)
         });
@@ -48,7 +48,7 @@ pub fn execute_with_trace<R: Read, W: Write>(input: R, output: &mut W) -> execut
             None => break,
         };
         let instruction =
-            parse::parse_complete_instruction(b1, &mut input, parse::parse_instruction);
+            parse::parse_prefixed_instruction(b1, &mut input, parse::parse_instruction);
 
         write!(output, "{}", instruction).unwrap();
 

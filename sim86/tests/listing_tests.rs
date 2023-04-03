@@ -7,8 +7,10 @@ use console::Style;
 use similar::{ChangeTag, TextDiff};
 
 use sim86::{
-    disassemble, disassemble_via_jump_table, execute_with_trace,
-    model::{Reg, SegmentReg, WordReg},
+    disassemble, disassemble_via_jump_table,
+    execute::Reg,
+    execute_with_trace,
+    model::{SegmentReg, WordReg},
 };
 
 // NOTE(photobaric): In order to run most of these tests, nasm and xxd must be installed
@@ -238,14 +240,14 @@ fn listing_0042_completionist_decode() {
     test_reassembly(BINARY, ASM);
 }
 
-const AX: Reg = Reg::WordReg(WordReg::AX);
-const BX: Reg = Reg::WordReg(WordReg::BX);
-const CX: Reg = Reg::WordReg(WordReg::CX);
-const DX: Reg = Reg::WordReg(WordReg::DX);
-const SP: Reg = Reg::WordReg(WordReg::SP);
-const BP: Reg = Reg::WordReg(WordReg::BP);
-const SI: Reg = Reg::WordReg(WordReg::SI);
-const DI: Reg = Reg::WordReg(WordReg::DI);
+const AX: Reg = Reg::Reg16(WordReg::AX);
+const BX: Reg = Reg::Reg16(WordReg::BX);
+const CX: Reg = Reg::Reg16(WordReg::CX);
+const DX: Reg = Reg::Reg16(WordReg::DX);
+const SP: Reg = Reg::Reg16(WordReg::SP);
+const BP: Reg = Reg::Reg16(WordReg::BP);
+const SI: Reg = Reg::Reg16(WordReg::SI);
+const DI: Reg = Reg::Reg16(WordReg::DI);
 const ES: Reg = Reg::SegmentReg(SegmentReg::ES);
 const SS: Reg = Reg::SegmentReg(SegmentReg::SS);
 const DS: Reg = Reg::SegmentReg(SegmentReg::DS);

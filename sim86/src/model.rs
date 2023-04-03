@@ -38,23 +38,6 @@ pub enum SegmentReg {
     DS = 0b11,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum Reg {
-    ByteReg(ByteReg),
-    WordReg(WordReg),
-    SegmentReg(SegmentReg),
-}
-
-impl Reg {
-    pub fn size(self) -> u8 {
-        match self {
-            Reg::ByteReg(_) => 1,
-            Reg::WordReg(_) => 2,
-            Reg::SegmentReg(_) => 2,
-        }
-    }
-}
-
 impl TryFrom<u8> for ByteReg {
     type Error = anyhow::Error;
 
@@ -110,16 +93,6 @@ impl ::std::fmt::Display for SegmentReg {
     }
 }
 
-impl ::std::fmt::Display for Reg {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Reg::ByteReg(byte_reg) => write!(f, "{}", byte_reg),
-            Reg::WordReg(word_reg) => write!(f, "{}", word_reg),
-            Reg::SegmentReg(segment_reg) => write!(f, "{}", segment_reg),
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone)]
 pub enum BaseReg {
     BX = 0b011,
@@ -158,10 +131,29 @@ impl ::std::fmt::Display for IndexReg {
     }
 }
 
-// TODO(photobaric): Should ModRM encode `is_word`?
-// TODO(photobaric): Add layer of nesting to ModRM for Memory and see if it increases the size of the struct
-// TODO(photobaric): Add `is_word` to ModRM and see if it increases the size of the struct
-// TODO(photobaric): Const assert sizes
+// NOTE(photobaric): Explicitly this only encodes general-purpose registers
+#[derive(Debug, Copy, Clone)]
+pub enum RegOperand {
+    Reg8(ByteReg),
+    Reg16(WordReg),
+}
+::static_assertions::assert_eq_size!(RegOperand, [u8; 2]);
+
+#[derive(Debug, Copy, Clone)]
+pub enum MemOperand {
+    Mem8(MemAddressingMode),
+    Mem16(MemAddressingMode),
+}
+
+// Nesting enums like this is still fairly memory-efficient:
+// - https://adeschamps.github.io/enum-size
+// - https://github.com/rust-lang/rust/pull/45225
+#[derive(Debug, Copy, Clone)]
+pub enum RegMemOperand {
+    Reg(RegOperand),
+    Mem(MemOperand),
+}
+::static_assertions::assert_eq_size!(RegMemOperand, [u8; 8]);
 
 // 8086 Addressing Modes:
 // This is organized in accordance to the taxonomy described in Section 2.8
@@ -169,10 +161,7 @@ impl ::std::fmt::Display for IndexReg {
 // This makes decoding a bit more complex but the data structure is closer to the mental model
 // of the 8086 processor.
 #[derive(Debug, Copy, Clone)]
-pub enum ModRM {
-    // MOD=11
-    Reg(Reg),
-
+pub enum MemAddressingMode {
     // MOD=00, RM=110
     // Page 2-69
     DirectAddressing(u16),
@@ -204,10 +193,36 @@ pub enum ModRM {
     BasedIndexedAddressing(BaseReg, IndexReg, u16),
     BasedIndexedAddressingNoDisp(BaseReg, IndexReg), // TODO(photobaric): What is the use case here?
 }
+::static_assertions::assert_eq_size!(MemAddressingMode, [u8; 6]);
 
-pub struct CompleteModRM(pub ModRM, pub Option<SegmentReg>);
+impl ::std::fmt::Display for RegOperand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RegOperand::Reg8(x) => write!(f, "{}", x),
+            RegOperand::Reg16(x) => write!(f, "{}", x),
+        }
+    }
+}
 
-impl ::std::fmt::Display for CompleteModRM {
+impl ::std::fmt::Display for MemOperand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemOperand::Mem8(x) => write!(f, "{}", x),
+            MemOperand::Mem16(x) => write!(f, "{}", x),
+        }
+    }
+}
+
+impl ::std::fmt::Display for RegMemOperand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RegMemOperand::Reg(x) => write!(f, "{}", x),
+            RegMemOperand::Mem(x) => write!(f, "{}", x),
+        }
+    }
+}
+
+impl ::std::fmt::Display for MemAddressingMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fn signed_displacement(displacement: u16) -> (char, i16) {
             let displacement: i16 = displacement as i16;
@@ -217,28 +232,25 @@ impl ::std::fmt::Display for CompleteModRM {
                 ('+', displacement)
             }
         }
-        let CompleteModRM(rm, segment_override) = self;
-        match (rm, segment_override) {
-            (ModRM::Reg(_), Some(_)) => {}
-            (_, Some(segment_register)) => {
-                write!(f, "{}:", segment_register)?;
+        match self {
+            MemAddressingMode::DirectAddressing(direct_address) => {
+                write!(f, "[{}]", direct_address)
             }
-            (_, None) => {}
-        }
-        match rm {
-            ModRM::Reg(reg) => write!(f, "{}", reg),
-            ModRM::DirectAddressing(direct_address) => write!(f, "[{}]", direct_address),
-            ModRM::RegisterIndirectAddressingViaBaseReg(base_reg) => write!(f, "[{}]", base_reg),
-            ModRM::RegisterIndirectAddressingViaIndexReg(index_reg) => write!(f, "[{}]", index_reg),
-            ModRM::BasedAddressing(base_reg, displacement) => {
+            MemAddressingMode::RegisterIndirectAddressingViaBaseReg(base_reg) => {
+                write!(f, "[{}]", base_reg)
+            }
+            MemAddressingMode::RegisterIndirectAddressingViaIndexReg(index_reg) => {
+                write!(f, "[{}]", index_reg)
+            }
+            MemAddressingMode::BasedAddressing(base_reg, displacement) => {
                 let (sign, displacement) = signed_displacement(*displacement);
                 write!(f, "[{} {} {}]", base_reg, sign, displacement)
             }
-            ModRM::IndexedAddressing(index_reg, displacement) => {
+            MemAddressingMode::IndexedAddressing(index_reg, displacement) => {
                 let (sign, displacement) = signed_displacement(*displacement);
                 write!(f, "[{} {} {}]", index_reg, sign, displacement)
             }
-            ModRM::BasedIndexedAddressing(base_reg, index_reg, displacement) => {
+            MemAddressingMode::BasedIndexedAddressing(base_reg, index_reg, displacement) => {
                 let (sign, displacement) = signed_displacement(*displacement);
                 write!(
                     f,
@@ -246,9 +258,36 @@ impl ::std::fmt::Display for CompleteModRM {
                     base_reg, index_reg, sign, displacement
                 )
             }
-            ModRM::BasedIndexedAddressingNoDisp(base_reg, index_reg) => {
+            MemAddressingMode::BasedIndexedAddressingNoDisp(base_reg, index_reg) => {
                 write!(f, "[{} + {}]", base_reg, index_reg)
             }
+        }
+    }
+}
+
+pub struct PrefixedMemAddressingMode(pub MemAddressingMode, pub Option<SegmentReg>);
+
+pub struct PrefixedRegMemOperand(pub RegMemOperand, pub Option<SegmentReg>);
+
+impl ::std::fmt::Display for PrefixedMemAddressingMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let PrefixedMemAddressingMode(mem, segment_override) = self;
+        match segment_override {
+            Some(segment_register) => write!(f, "{}:{}", segment_register, mem),
+            None => write!(f, "{}", mem),
+        }
+    }
+}
+
+impl ::std::fmt::Display for PrefixedRegMemOperand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let PrefixedRegMemOperand(rm, segment_override) = self;
+        match rm {
+            RegMemOperand::Reg(reg) => write!(f, "{}", reg),
+            RegMemOperand::Mem(mem) => match segment_override {
+                Some(segment_register) => write!(f, "{}:{}", segment_register, mem),
+                None => write!(f, "{}", mem),
+            },
         }
     }
 }
@@ -259,46 +298,37 @@ pub enum ByteOrWord {
     Word(u16),
 }
 
-impl ::std::fmt::Display for ByteOrWord {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ByteOrWord::Byte(byte) => write!(f, "byte {}", byte),
-            ByteOrWord::Word(word) => write!(f, "word {}", word),
-        }
-    }
-}
-
-pub struct NoPrefixByteOrWord(ByteOrWord);
-
-impl ::std::fmt::Display for NoPrefixByteOrWord {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            ByteOrWord::Byte(byte) => write!(f, "{}", byte),
-            ByteOrWord::Word(word) => write!(f, "{}", word),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum Instruction {
     MovRmToFromReg {
         is_reg_dst: bool,
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     MovImmediateToRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
+    MovRmToFromSegmentReg {
+        is_segment_reg_dst: bool,
+        segment_reg: SegmentReg,
+        rm: RegMemOperand,
+    },
     Push {
-        rm: ModRM,
+        rm: RegMemOperand,
+    },
+    PushSegmentReg {
+        segment_reg: SegmentReg,
     },
     Pop {
-        rm: ModRM,
+        rm: RegMemOperand,
+    },
+    PopSegmentReg {
+        segment_reg: SegmentReg,
     },
     Xchg {
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     InFixed {
         is_word: bool,
@@ -316,16 +346,16 @@ pub enum Instruction {
     },
     Xlat,
     Lea {
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     Lds {
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     Les {
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     Lahf,
     Sahf,
@@ -334,158 +364,143 @@ pub enum Instruction {
 
     AddRmToFromReg {
         is_reg_dst: bool,
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     AddImmediateToRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
     AdcRmToFromReg {
         is_reg_dst: bool,
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     AdcImmediateToRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
     Inc {
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Aaa,
     Daa,
     SubRmToFromReg {
         is_reg_dst: bool,
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     SubImmediateToRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
     SbbRmToFromReg {
         is_reg_dst: bool,
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     SbbImmediateToRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
     Dec {
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Neg {
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     CmpRmWithReg {
         is_reg_dst: bool,
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     CmpImmediateWithRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
     Aas,
     Das,
     Mul {
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Imul {
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Aam,
     Div {
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Idiv {
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Aad,
     Cbw,
     Cwd,
 
     Not {
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     ShlSal {
         count: bool,
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Shr {
         count: bool,
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Sar {
         count: bool,
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Rol {
         count: bool,
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Ror {
         count: bool,
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Rcl {
         count: bool,
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     Rcr {
         count: bool,
-        is_word: bool,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     AndRmToFromReg {
         is_reg_dst: bool,
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     AndImmediateToRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
     TestRmWithReg {
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     TestImmediateToRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
     OrRmToFromReg {
         is_reg_dst: bool,
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     OrImmediateToRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
     XorRmToFromReg {
         is_reg_dst: bool,
-        reg: Reg,
-        rm: ModRM,
+        reg: RegOperand,
+        rm: RegMemOperand,
     },
     XorImmediateToRm {
-        rm: ModRM,
+        rm: RegMemOperand,
         immediate: ByteOrWord,
     },
 
@@ -509,14 +524,14 @@ pub enum Instruction {
         ip_inc16: i16,
     },
     CallIndirect {
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     CallDirectIntersegment {
         ip: u16,
         cs: u16,
     },
     CallIndirectIntersegment {
-        rm: ModRM,
+        rm: RegMemOperand,
     },
 
     // Separate case from JmpDirect because instruction size is different
@@ -528,14 +543,14 @@ pub enum Instruction {
         ip_inc16: i16,
     },
     JmpIndirect {
-        rm: ModRM,
+        rm: RegMemOperand,
     },
     JmpDirectIntersegment {
         ip: u16,
         cs: u16,
     },
     JmpIndirectIntersegment {
-        rm: ModRM,
+        rm: RegMemOperand,
     },
 
     Ret {
@@ -629,11 +644,10 @@ pub enum Instruction {
     Wait,
     Esc {
         external_opcode: u8,
-        rm: ModRM,
+        rm: RegMemOperand,
     },
 }
-
-static_assertions::assert_eq_size!(Instruction, [u8; 12]);
+::static_assertions::assert_eq_size!(Instruction, [u8; 14]);
 
 // top 2 bits are zero, next 3 bits for segment override prefix, next 2 bits for rep, last 1 bit for lock
 #[derive(Debug, Clone, Copy, Default)]
@@ -678,27 +692,12 @@ impl PrefixState {
     }
 }
 
-pub struct CompleteInstruction(pub Instruction, pub PrefixState);
-static_assertions::assert_eq_size!(CompleteInstruction, [u8; 14]);
+pub struct PrefixedInstruction(pub Instruction, pub PrefixState);
+static_assertions::assert_eq_size!(PrefixedInstruction, [u8; 16]);
 
-impl ::std::fmt::Display for CompleteInstruction {
+impl ::std::fmt::Display for PrefixedInstruction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let CompleteInstruction(instruction, prefix_state) = self;
-        macro_rules! display_jump {
-            ($name:expr, $ip_inc8:ident, $size:literal) => {{
-                // nasm wants the displacment to be from the beginning of the instruction
-                // but in the machine code it's encoded from the end.
-                // https://www.nasm.us/doc/nasmdoc3.html#section-3.5
-                //
-                // widen to i32 to fit `+ SIZE` and to fit the negated negative min
-                let ip_inc8 = (*$ip_inc8 as i32) + $size;
-                if ip_inc8 < 0 {
-                    write!(f, "{} $-{}", $name, -ip_inc8)
-                } else {
-                    write!(f, "{} $+{}", $name, ip_inc8)
-                }
-            }};
-        }
+        let PrefixedInstruction(instruction, prefix_state) = self;
         if prefix_state.get_lock() {
             write!(f, "lock ")?;
         }
@@ -714,18 +713,75 @@ impl ::std::fmt::Display for CompleteInstruction {
         let segment_override = prefix_state.get_segment_override();
         macro_rules! rm {
             ($rm:ident) => {
-                CompleteModRM(*$rm, segment_override)
+                PrefixedRegMemOperand(*$rm, segment_override)
             };
         }
+        macro_rules! mem {
+            ($mem:ident) => {
+                PrefixedMemAddressingMode(*$mem, segment_override)
+            };
+        }
+        macro_rules! display_immediate_to_rm {
+            ($name:literal, $rm:ident, $immediate:ident) => {{
+                match ($rm, $immediate) {
+                    // in case of a reg destination, the size of the immediate is already clear from the size of the reg
+                    (RegMemOperand::Reg(RegOperand::Reg8(reg)), ByteOrWord::Byte(immediate)) => {
+                        write!(f, "{} {}, {}", $name, reg, immediate)
+                    }
+                    (RegMemOperand::Reg(RegOperand::Reg16(reg)), ByteOrWord::Word(immediate)) => {
+                        write!(f, "{} {}, {}", $name, reg, immediate)
+                    }
+
+                    (RegMemOperand::Mem(MemOperand::Mem8(mem)), ByteOrWord::Byte(immediate)) => {
+                        write!(f, "{} {}, byte {}", $name, mem!(mem), immediate)
+                    }
+                    (RegMemOperand::Mem(MemOperand::Mem16(mem)), ByteOrWord::Word(immediate)) => {
+                        write!(f, "{} {}, word {}", $name, mem!(mem), immediate)
+                    }
+
+                    (RegMemOperand::Reg(RegOperand::Reg8(_)), ByteOrWord::Word(_)) => unreachable!(),
+                    (RegMemOperand::Reg(RegOperand::Reg16(_)), ByteOrWord::Byte(_)) => unreachable!(),
+                    (RegMemOperand::Mem(MemOperand::Mem8(_)), ByteOrWord::Word(_)) => unreachable!(),
+                    (RegMemOperand::Mem(MemOperand::Mem16(_)), ByteOrWord::Byte(_)) => unreachable!(),
+                }
+            }};
+        }
+        macro_rules! display_unary_rm {
+            ($name:literal, $rm:ident) => {{
+                // in case of a reg destination, the size of the immediate is already clear from the size of the reg
+                match $rm {
+                    RegMemOperand::Reg(reg) => write!(f, "{} {}", $name, reg),
+                    RegMemOperand::Mem(MemOperand::Mem8(mem)) => write!(f, "{} byte {}", $name, mem!(mem)),
+                    RegMemOperand::Mem(MemOperand::Mem16(mem)) => write!(f, "{} word {}", $name, mem!(mem)),
+                }
+            }};
+        }
         macro_rules! display_shift {
-            ($name:literal, $count:ident, $is_word:ident, $rm:ident) => {{
+            ($name:literal, $count:ident, $rm:ident) => {{
                 let count = if *$count { "cl" } else { "1" };
                 match $rm {
-                    ModRM::Reg(reg) => write!(f, "{} {}, {}", $name, reg, count),
-                    _ => {
-                        let byte_or_word = if *$is_word { "word" } else { "byte" };
-                        write!(f, "{} {} {}, {}", $name, byte_or_word, rm!($rm), count)
+                    RegMemOperand::Reg(reg) => write!(f, "{} {}, {}", $name, reg, count),
+                    RegMemOperand::Mem(MemOperand::Mem8(mem)) => {
+                        write!(f, "{} byte {}, {}", $name, mem!(mem), count)
                     }
+                    RegMemOperand::Mem(MemOperand::Mem16(mem)) => {
+                        write!(f, "{} word {}, {}", $name, mem!(mem), count)
+                    }
+                }
+            }};
+        }
+        macro_rules! display_jump {
+            ($name:expr, $ip_inc8:ident, $size:literal) => {{
+                // nasm wants the displacment to be from the beginning of the instruction
+                // but in the machine code it's encoded from the end.
+                // https://www.nasm.us/doc/nasmdoc3.html#section-3.5
+                //
+                // widen to i32 to fit `+ SIZE` and to fit the negated negative min
+                let ip_inc8 = (*$ip_inc8 as i32) + $size;
+                if ip_inc8 < 0 {
+                    write!(f, "{} $-{}", $name, -ip_inc8)
+                } else {
+                    write!(f, "{} $+{}", $name, ip_inc8)
                 }
             }};
         }
@@ -741,23 +797,24 @@ impl ::std::fmt::Display for CompleteInstruction {
                     write!(f, "mov {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::MovImmediateToRm { rm, immediate } => match rm {
-                // in case of a reg destination, the size of the immediate is already clear from the size of the reg
-                ModRM::Reg(reg) => write!(f, "mov {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "mov {}, {}", rm!(rm), immediate),
-            },
-            Instruction::Push { rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "push {}", reg),
-                // for some reason nasm wants "word" to be specified explicitly
-                // even though Page 2-31 says that push always pushes words
-                _ => write!(f, "push word {}", rm!(rm)),
-            },
-            Instruction::Pop { rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "pop {}", reg),
-                // for some reason nasm wants "word" to be specified explicitly
-                // even though Page 2-31 says that pop always pops words
-                _ => write!(f, "pop word {}", rm!(rm)),
-            },
+            Instruction::MovImmediateToRm { rm, immediate } => {
+                display_immediate_to_rm!("mov", rm, immediate)
+            }
+            Instruction::MovRmToFromSegmentReg {
+                is_segment_reg_dst,
+                segment_reg,
+                rm,
+            } => {
+                if *is_segment_reg_dst {
+                    write!(f, "mov {}, {}", segment_reg, rm!(rm))
+                } else {
+                    write!(f, "mov {}, {}", rm!(rm), segment_reg)
+                }
+            }
+            Instruction::Push { rm } => display_unary_rm!("push", rm),
+            Instruction::PushSegmentReg { segment_reg } => write!(f, "push {}", segment_reg),
+            Instruction::Pop { rm } => display_unary_rm!("pop", rm),
+            Instruction::PopSegmentReg { segment_reg } => write!(f, "pop {}", segment_reg),
             Instruction::Xchg { reg, rm } => {
                 // work around nasm bug by making the memory operand the first argument
                 // when there is a lock prefix:
@@ -808,10 +865,9 @@ impl ::std::fmt::Display for CompleteInstruction {
                     write!(f, "add {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::AddImmediateToRm { rm, immediate } => match rm {
-                ModRM::Reg(reg) => write!(f, "add {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "add {}, {}", rm!(rm), immediate),
-            },
+            Instruction::AddImmediateToRm { rm, immediate } => {
+                display_immediate_to_rm!("add", rm, immediate)
+            }
             Instruction::AdcRmToFromReg {
                 is_reg_dst,
                 reg,
@@ -823,17 +879,10 @@ impl ::std::fmt::Display for CompleteInstruction {
                     write!(f, "adc {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::AdcImmediateToRm { rm, immediate } => match rm {
-                ModRM::Reg(reg) => write!(f, "adc {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "adc {}, {}", rm!(rm), immediate),
-            },
-            Instruction::Inc { is_word, rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "inc {}", reg),
-                _ => {
-                    let byte_or_word = if *is_word { "word" } else { "byte" };
-                    write!(f, "inc {} {}", byte_or_word, rm!(rm))
-                }
-            },
+            Instruction::AdcImmediateToRm { rm, immediate } => {
+                display_immediate_to_rm!("adc", rm, immediate)
+            }
+            Instruction::Inc { rm } => display_unary_rm!("inc", rm),
             Instruction::Aaa => write!(f, "aaa"),
             Instruction::Daa => write!(f, "daa"),
             Instruction::SubRmToFromReg {
@@ -847,10 +896,9 @@ impl ::std::fmt::Display for CompleteInstruction {
                     write!(f, "sub {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::SubImmediateToRm { rm, immediate } => match rm {
-                ModRM::Reg(reg) => write!(f, "sub {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "sub {}, {}", rm!(rm), immediate),
-            },
+            Instruction::SubImmediateToRm { rm, immediate } => {
+                display_immediate_to_rm!("sub", rm, immediate)
+            }
             Instruction::SbbRmToFromReg {
                 is_reg_dst,
                 reg,
@@ -862,24 +910,11 @@ impl ::std::fmt::Display for CompleteInstruction {
                     write!(f, "sbb {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::SbbImmediateToRm { rm, immediate } => match rm {
-                ModRM::Reg(reg) => write!(f, "sbb {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "sbb {}, {}", rm!(rm), immediate),
-            },
-            Instruction::Dec { is_word, rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "dec {}", reg),
-                _ => {
-                    let byte_or_word = if *is_word { "word" } else { "byte" };
-                    write!(f, "dec {} {}", byte_or_word, rm!(rm))
-                }
-            },
-            Instruction::Neg { is_word, rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "neg {}", reg),
-                _ => {
-                    let byte_or_word = if *is_word { "word" } else { "byte" };
-                    write!(f, "neg {} {}", byte_or_word, rm!(rm))
-                }
-            },
+            Instruction::SbbImmediateToRm { rm, immediate } => {
+                display_immediate_to_rm!("sbb", rm, immediate)
+            }
+            Instruction::Dec { rm } => display_unary_rm!("dec", rm),
+            Instruction::Neg { rm } => display_unary_rm!("neg", rm),
             Instruction::CmpRmWithReg {
                 is_reg_dst,
                 reg,
@@ -891,61 +926,28 @@ impl ::std::fmt::Display for CompleteInstruction {
                     write!(f, "cmp {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::CmpImmediateWithRm { rm, immediate } => match rm {
-                ModRM::Reg(reg) => write!(f, "cmp {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "cmp {}, {}", rm!(rm), immediate),
-            },
+            Instruction::CmpImmediateWithRm { rm, immediate } => {
+                display_immediate_to_rm!("cmp", rm, immediate)
+            }
             Instruction::Aas => write!(f, "aas"),
             Instruction::Das => write!(f, "das"),
-            Instruction::Mul { is_word, rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "mul {}", reg),
-                _ => {
-                    let byte_or_word = if *is_word { "word" } else { "byte" };
-                    write!(f, "mul {} {}", byte_or_word, rm!(rm))
-                }
-            },
-            Instruction::Imul { is_word, rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "imul {}", reg),
-                _ => {
-                    let byte_or_word = if *is_word { "word" } else { "byte" };
-                    write!(f, "imul {} {}", byte_or_word, rm!(rm))
-                }
-            },
+            Instruction::Mul { rm } => display_unary_rm!("mul", rm),
+            Instruction::Imul { rm } => display_unary_rm!("imul", rm),
             Instruction::Aam => write!(f, "aam"),
-            Instruction::Div { is_word, rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "div {}", reg),
-                _ => {
-                    let byte_or_word = if *is_word { "word" } else { "byte" };
-                    write!(f, "div {} {}", byte_or_word, rm!(rm))
-                }
-            },
-            Instruction::Idiv { is_word, rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "idiv {}", reg),
-                _ => {
-                    let byte_or_word = if *is_word { "word" } else { "byte" };
-                    write!(f, "idiv {} {}", byte_or_word, rm!(rm))
-                }
-            },
+            Instruction::Div { rm } => display_unary_rm!("div", rm),
+            Instruction::Idiv { rm } => display_unary_rm!("idiv", rm),
             Instruction::Aad => write!(f, "aad"),
             Instruction::Cbw => write!(f, "cbw"),
             Instruction::Cwd => write!(f, "cwd"),
 
-            Instruction::Not { is_word, rm } => match rm {
-                ModRM::Reg(reg) => write!(f, "not {}", reg),
-                _ => {
-                    let byte_or_word = if *is_word { "word" } else { "byte" };
-                    write!(f, "not {} {}", byte_or_word, rm!(rm))
-                }
-            },
-            Instruction::ShlSal { count, is_word, rm } => {
-                display_shift!("shl", count, is_word, rm)
-            }
-            Instruction::Shr { count, is_word, rm } => display_shift!("shr", count, is_word, rm),
-            Instruction::Sar { count, is_word, rm } => display_shift!("sar", count, is_word, rm),
-            Instruction::Rol { count, is_word, rm } => display_shift!("rol", count, is_word, rm),
-            Instruction::Ror { count, is_word, rm } => display_shift!("ror", count, is_word, rm),
-            Instruction::Rcl { count, is_word, rm } => display_shift!("rcl", count, is_word, rm),
-            Instruction::Rcr { count, is_word, rm } => display_shift!("rcr", count, is_word, rm),
+            Instruction::Not { rm } => display_unary_rm!("not", rm),
+            Instruction::ShlSal { count, rm } => display_shift!("shl", count, rm),
+            Instruction::Shr { count, rm } => display_shift!("shr", count, rm),
+            Instruction::Sar { count, rm } => display_shift!("sar", count, rm),
+            Instruction::Rol { count, rm } => display_shift!("rol", count, rm),
+            Instruction::Ror { count, rm } => display_shift!("ror", count, rm),
+            Instruction::Rcl { count, rm } => display_shift!("rcl", count, rm),
+            Instruction::Rcr { count, rm } => display_shift!("rcr", count, rm),
             Instruction::AndRmToFromReg {
                 is_reg_dst,
                 reg,
@@ -957,20 +959,18 @@ impl ::std::fmt::Display for CompleteInstruction {
                     write!(f, "and {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::AndImmediateToRm { rm, immediate } => match rm {
-                ModRM::Reg(reg) => write!(f, "and {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "and {}, {}", rm!(rm), immediate),
-            },
+            Instruction::AndImmediateToRm { rm, immediate } => {
+                display_immediate_to_rm!("and", rm, immediate)
+            }
             Instruction::TestRmWithReg { reg, rm } => {
                 // Seems that for `test` the r/m operand is typically written first:
                 // - Page 4-31
                 // - https://c9x.me/x86/html/file_module_x86_id_315.html
                 write!(f, "test {}, {}", rm!(rm), reg)
             }
-            Instruction::TestImmediateToRm { rm, immediate } => match rm {
-                ModRM::Reg(reg) => write!(f, "test {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "test {}, {}", rm!(rm), immediate),
-            },
+            Instruction::TestImmediateToRm { rm, immediate } => {
+                display_immediate_to_rm!("test", rm, immediate)
+            }
             Instruction::OrRmToFromReg {
                 is_reg_dst,
                 reg,
@@ -982,10 +982,9 @@ impl ::std::fmt::Display for CompleteInstruction {
                     write!(f, "or {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::OrImmediateToRm { rm, immediate } => match rm {
-                ModRM::Reg(reg) => write!(f, "or {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "or {}, {}", rm!(rm), immediate),
-            },
+            Instruction::OrImmediateToRm { rm, immediate } => {
+                display_immediate_to_rm!("or", rm, immediate)
+            }
             Instruction::XorRmToFromReg {
                 is_reg_dst,
                 reg,
@@ -997,10 +996,9 @@ impl ::std::fmt::Display for CompleteInstruction {
                     write!(f, "xor {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::XorImmediateToRm { rm, immediate } => match rm {
-                ModRM::Reg(reg) => write!(f, "xor {}, {}", reg, NoPrefixByteOrWord(*immediate)),
-                _ => write!(f, "xor {}, {}", rm!(rm), immediate),
-            },
+            Instruction::XorImmediateToRm { rm, immediate } => {
+                display_immediate_to_rm!("xor", rm, immediate)
+            }
 
             Instruction::Movs { is_word } => {
                 write!(f, "{}", if *is_word { "movsw" } else { "movsb" })
@@ -1081,5 +1079,28 @@ impl ::std::fmt::Display for CompleteInstruction {
                 rm,
             } => write!(f, "esc {}, {}", external_opcode, rm!(rm)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn print_sizes() {
+        macro_rules! print_size {
+            ($name:ident) => {
+                println!(
+                    "{} - size {} align {}",
+                    ::std::any::type_name::<$name>(),
+                    ::std::mem::size_of::<$name>(),
+                    ::std::mem::align_of::<$name>()
+                );
+            };
+        }
+        print_size!(RegOperand);
+        print_size!(MemAddressingMode);
+        print_size!(RegMemOperand);
+        print_size!(Instruction);
     }
 }
