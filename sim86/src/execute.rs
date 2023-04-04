@@ -29,6 +29,8 @@ macro_rules! rw_flag {
     };
 }
 
+// This needs to be macro because a, b, r can be arbitrary integer types
+// and we don't have a trait that unifies across them (we may consider something like funty).
 macro_rules! compute_af {
     ($a:ident, $b:ident, $r:ident) => {
         // AF is basically the CF but looking at the 4th bit instead of the 8th bit.
@@ -453,6 +455,14 @@ impl MachineState {
     rw_flag!(read_if, write_if, 9);
     rw_flag!(read_df, write_df, 10);
     rw_flag!(read_of, write_of, 11);
+
+    pub fn read_ip(&self) -> u16 {
+        self.ip_reg
+    }
+
+    pub fn write_ip(&mut self, ip: u16) {
+        self.ip_reg = ip;
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -480,7 +490,8 @@ impl MachineState {
                 writeln!(output, "{}: {:#06x} ({})", segment_reg, value, value)?;
             }
             Reg::IpReg => {
-                writeln!(output, "ip: {}", self.ip_reg)?;
+                let value = self.ip_reg;
+                writeln!(output, "ip: {:#06x} ({})", value, value)?;
             }
             Reg::FlagsReg => {
                 let value = self.flags_reg;

@@ -254,6 +254,7 @@ const DI: Reg = Reg::Reg16(WordReg::DI);
 const ES: Reg = Reg::SegmentReg(SegmentReg::ES);
 const SS: Reg = Reg::SegmentReg(SegmentReg::SS);
 const DS: Reg = Reg::SegmentReg(SegmentReg::DS);
+const IP: Reg = Reg::IpReg;
 const FLAGS: Reg = Reg::FlagsReg;
 
 #[test]
@@ -342,7 +343,7 @@ fn listing_0048_ip_register() {
         BINARY,
         TRACE,
         r"--- test\listing_0048_ip_register execution ---",
-        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+        &[BX, CX, IP, FLAGS],
     );
 }
 

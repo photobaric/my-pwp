@@ -40,6 +40,8 @@ pub fn execute_with_trace<W: Write>(
 ) -> execute::MachineState {
     let mut machine_state = execute::MachineState::default();
     loop {
+        input.set_position(machine_state.read_ip().into());
+
         let b1: u8 = match parse::next_byte(&mut input) {
             Some(Ok(b)) => b,
             Some(Err(e)) => panic!("Failed to get next byte due to IO error - {}", e),
@@ -51,6 +53,8 @@ pub fn execute_with_trace<W: Write>(
         write!(output, "{} ;", instruction).unwrap();
 
         let prev_machine_state = machine_state.clone();
+
+        machine_state.write_ip(input.position().try_into().unwrap());
         machine_state.execute_instruction(instruction);
 
         execute::MachineStateDiff::diff(&prev_machine_state, &machine_state, |diff| {
