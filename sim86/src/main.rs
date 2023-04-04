@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{Cursor, Read, Write};
 
 use sim86::{disassemble, execute_with_trace};
 
@@ -18,7 +18,7 @@ enum Action {
 fn main() {
     let args = <Args as clap::Parser>::parse();
 
-    let stdin = std::io::stdin().lock();
+    let mut stdin = std::io::stdin().lock();
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 
     match args.action {
@@ -28,8 +28,13 @@ fn main() {
             stdout.flush().unwrap();
         }
         Action::Exec => {
+            let mut buffer: Vec<u8> = Vec::new();
+            stdin.read_to_end(&mut buffer).unwrap();
+            drop(stdin);
+            let input: Cursor<Vec<u8>> = Cursor::new(buffer);
+
             writeln!(stdout, "trace:").unwrap();
-            let final_machine_state = execute_with_trace(stdin, &mut stdout);
+            let final_machine_state = execute_with_trace(input, &mut stdout);
             writeln!(stdout).unwrap();
             writeln!(stdout, "final register state:").unwrap();
             final_machine_state

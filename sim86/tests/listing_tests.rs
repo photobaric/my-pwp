@@ -166,11 +166,12 @@ fn test_reassembly(binary: &[u8], _expected_asm: &str) {
 }
 
 fn test_execution(binary: &[u8], expected_trace: &str, header: &str, print_registers: &[Reg]) {
+    let read: Cursor<&[u8]> = Cursor::new(binary);
     let mut write: Cursor<Vec<u8>> = Cursor::new(Vec::new());
 
     writeln!(write, "{}", header).unwrap();
 
-    let final_machine_state = execute_with_trace(binary, &mut write);
+    let final_machine_state = execute_with_trace(read, &mut write);
 
     writeln!(write).unwrap();
     writeln!(write, "Final registers:").unwrap();

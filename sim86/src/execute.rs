@@ -491,11 +491,15 @@ impl MachineState {
             let value = self.gprs[gpr as usize];
             writeln!(output, "{}: {:#06x} ({})", gpr, value, value)?;
         }
+
         for sr in 0b00u8..=0b11u8 {
             let sr: SegmentReg = SegmentReg::try_from(sr).unwrap();
             let value = self.srs[sr as usize];
             writeln!(output, "{}: {:#06x} ({})", sr, value, value)?;
         }
+
+        writeln!(output, "flags: {}", Flags(self.flags_reg))?;
+
         Ok(())
     }
 }

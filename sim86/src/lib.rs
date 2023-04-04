@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Seek, Write};
 
 pub mod execute;
 pub mod model;
@@ -38,7 +38,10 @@ pub fn disassemble_via_jump_table<R: Read, W: Write>(input: R, output: &mut W) {
     }
 }
 
-pub fn execute_with_trace<R: Read, W: Write>(input: R, output: &mut W) -> execute::MachineState {
+pub fn execute_with_trace<R: BufRead + Seek, W: Write>(
+    input: R,
+    output: &mut W,
+) -> execute::MachineState {
     let mut machine_state = execute::MachineState::default();
     let mut input = input.bytes();
     loop {
