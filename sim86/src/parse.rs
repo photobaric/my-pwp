@@ -1,13 +1,28 @@
-use std::io::{Bytes, Read};
+use std::{
+    io::{ErrorKind, Read},
+    slice,
+};
 
 use crate::model::{
     BaseReg, ByteOrWord, ByteReg, IndexReg, Instruction, MemAddressingMode, MemOperand,
     PrefixState, PrefixedInstruction, RegMemOperand, RegOperand, SegmentReg, WordReg,
 };
 
+pub fn next_byte<R: Read>(input: &mut R) -> Option<Result<u8, ::std::io::Error>> {
+    let mut byte: u8 = 0;
+    loop {
+        return match input.read(slice::from_mut(&mut byte)) {
+            Ok(0) => None,
+            Ok(..) => Some(Ok(byte)),
+            Err(ref e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => Some(Err(e)),
+        };
+    }
+}
+
 macro_rules! next_byte_or_err {
     ($input:ident, $error:expr) => {
-        match $input.next() {
+        match next_byte($input) {
             Some(Ok(b)) => b,
             Some(Err(e)) => return Err(e.into()),
             None => return Err($error.into()),
@@ -15,14 +30,13 @@ macro_rules! next_byte_or_err {
     };
 }
 
-macro_rules! next_byte_or_panic {
-    ($input:ident) => {
-        match $input.next() {
-            Some(Ok(b)) => b,
-            Some(Err(e)) => panic!("Failed to get next byte due to IO error - {}", e),
-            None => panic!("Failed to get next byte due where required"),
-        }
-    };
+fn next_byte_or_panic<R: Read>(input: &mut R) -> u8 {
+    let byte = next_byte(input);
+    match byte {
+        Some(Ok(b)) => b,
+        Some(Err(e)) => panic!("Failed to get next byte due to IO error - {}", e),
+        None => panic!("Failed to get next byte where required"),
+    }
 }
 
 fn parse_general_purpose_reg(is_word: bool, reg: u8) -> RegOperand {
@@ -65,7 +79,7 @@ impl_display_via_debug!(ParseModRMError);
 fn parse_modrm<R: Read>(
     is_word: bool,
     b2: u8,
-    input: &mut Bytes<R>,
+    input: &mut R,
 ) -> Result<RegMemOperand, ParseModRMError> {
     let mode = b2 >> 6;
     let rm = b2 & 0b00000111;
@@ -186,7 +200,7 @@ impl_display_via_debug!(ParseImmediateError);
 
 fn parse_immediate<R: Read>(
     is_word: bool,
-    input: &mut Bytes<R>,
+    input: &mut R,
 ) -> Result<ByteOrWord, ParseImmediateError> {
     if is_word {
         parse_immediate_word(input).map(ByteOrWord::Word)
@@ -195,27 +209,27 @@ fn parse_immediate<R: Read>(
     }
 }
 
-fn parse_immediate_byte<R: Read>(input: &mut Bytes<R>) -> Result<u8, ParseImmediateError> {
+fn parse_immediate_byte<R: Read>(input: &mut R) -> Result<u8, ParseImmediateError> {
     let data_lo = next_byte_or_err!(input, ParseImmediateError::MissingDataLo);
     Ok(data_lo)
 }
 
-fn parse_immediate_word<R: Read>(input: &mut Bytes<R>) -> Result<u16, ParseImmediateError> {
+fn parse_immediate_word<R: Read>(input: &mut R) -> Result<u16, ParseImmediateError> {
     let data_lo = next_byte_or_err!(input, ParseImmediateError::MissingDataLo);
     let data_hi = next_byte_or_err!(input, ParseImmediateError::MissingDataHi);
     let data = (data_hi as u16) << 8 | (data_lo as u16);
     Ok(data)
 }
 
-fn fail_unimplemented<R: Read>(b1: u8, _: &mut Bytes<R>) -> Instruction {
+fn fail_unimplemented<R: Read>(b1: u8, _: &mut R) -> Instruction {
     panic!("Unknown instruction - first byte {:#010b}", b1)
 }
 
-fn fail_unused<R: Read>(b1: u8, _: &mut Bytes<R>) -> Instruction {
+fn fail_unused<R: Read>(b1: u8, _: &mut R) -> Instruction {
     panic!("Invalid instruction - first byte {:#010b}", b1)
 }
 
-fn parse_0b100010xx_mov_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b100010xx_mov_rm_to_from_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // MOV - Register/memory to/from register
 
     // semantics of D bit:
@@ -225,7 +239,7 @@ fn parse_0b100010xx_mov_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
 
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -238,12 +252,12 @@ fn parse_0b100010xx_mov_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
     }
 }
 
-fn parse_0b1100011x_mov_immediate_to_rm<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1100011x_mov_immediate_to_rm<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // MOV - Immediate to register/memory
 
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let rm = parse_modrm(is_word, b2, input).unwrap();
     let immediate = parse_immediate(is_word, input).unwrap();
@@ -251,7 +265,7 @@ fn parse_0b1100011x_mov_immediate_to_rm<R: Read>(b1: u8, input: &mut Bytes<R>) -
     Instruction::MovImmediateToRm { rm, immediate }
 }
 
-fn parse_0b1011xxxx_mov_immediate_to_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1011xxxx_mov_immediate_to_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // MOV - Immediate to register
 
     let is_word = b1 & 0b1000 != 0;
@@ -263,7 +277,7 @@ fn parse_0b1011xxxx_mov_immediate_to_reg<R: Read>(b1: u8, input: &mut Bytes<R>) 
     Instruction::MovImmediateToRm { rm, immediate }
 }
 
-fn parse_0b101000xx_mov_mem_to_from_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b101000xx_mov_mem_to_from_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // MOV - Memory to/from accumulator
 
     let is_reg_dst = b1 & 0b10 == 0;
@@ -271,8 +285,8 @@ fn parse_0b101000xx_mov_mem_to_from_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R
 
     let reg = parse_accumulator_reg(is_word);
     let rm = {
-        let addr_lo = next_byte_or_panic!(input);
-        let addr_hi = next_byte_or_panic!(input);
+        let addr_lo = next_byte_or_panic(input);
+        let addr_hi = next_byte_or_panic(input);
         let direct_address = (addr_hi as u16) << 8 | (addr_lo as u16);
         let mem_addressing_mode = MemAddressingMode::DirectAddressing(direct_address);
         let mem_operand = if is_word {
@@ -290,15 +304,12 @@ fn parse_0b101000xx_mov_mem_to_from_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R
     }
 }
 
-fn parse_0b100011x0_mov_rm_to_from_segment_reg<R: Read>(
-    b1: u8,
-    input: &mut Bytes<R>,
-) -> Instruction {
+fn parse_0b100011x0_mov_rm_to_from_segment_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // MOV - Register/memory to/from segment register
 
     let is_segment_reg_dst = b1 & 0b10 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let sr = (b2 & 0b11000) >> 3;
 
@@ -312,13 +323,13 @@ fn parse_0b100011x0_mov_rm_to_from_segment_reg<R: Read>(
     }
 }
 
-fn parse_0b000000xx_add_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b000000xx_add_rm_to_from_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // ADD - Register/memory to/from register
 
     let is_reg_dst = b1 & 0b10 != 0;
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -331,7 +342,7 @@ fn parse_0b000000xx_add_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
     }
 }
 
-fn parse_0b0000010x_add_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b0000010x_add_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // ADD - Immediate to accumulator
 
     let is_word = b1 & 1 != 0;
@@ -342,11 +353,11 @@ fn parse_0b0000010x_add_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<
     Instruction::AddImmediateToRm { rm, immediate }
 }
 
-fn parse_0b000100xx_adc_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b000100xx_adc_rm_to_from_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_reg_dst = b1 & 0b10 != 0;
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -359,7 +370,7 @@ fn parse_0b000100xx_adc_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
     }
 }
 
-fn parse_0b0001010x_adc_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b0001010x_adc_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
 
     let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
@@ -368,28 +379,28 @@ fn parse_0b0001010x_adc_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<
     Instruction::AdcImmediateToRm { rm, immediate }
 }
 
-fn parse_0b01000xxx_inc_word_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b01000xxx_inc_word_reg<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Inc {
         rm: RegMemOperand::Reg(RegOperand::Reg16(word_reg)),
     }
 }
 
-fn parse_0b00110111_aaa<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b00110111_aaa<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Aaa
 }
 
-fn parse_0b00100111_daa<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b00100111_daa<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Daa
 }
 
-fn parse_0b001010xx_sub_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b001010xx_sub_rm_to_from_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // SUB - Register/memory to/from register
 
     let is_reg_dst = b1 & 0b10 != 0;
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -402,7 +413,7 @@ fn parse_0b001010xx_sub_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
     }
 }
 
-fn parse_0b0010110x_sub_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b0010110x_sub_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // SUB - Immediate to accumulator
 
     let is_word = b1 & 1 != 0;
@@ -413,11 +424,11 @@ fn parse_0b0010110x_sub_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<
     Instruction::SubImmediateToRm { rm, immediate }
 }
 
-fn parse_0b000110xx_sbb_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b000110xx_sbb_rm_to_from_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_reg_dst = b1 & 0b10 != 0;
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -430,7 +441,7 @@ fn parse_0b000110xx_sbb_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
     }
 }
 
-fn parse_0b0001110x_sbb_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b0001110x_sbb_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
 
     let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
@@ -439,20 +450,20 @@ fn parse_0b0001110x_sbb_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<
     Instruction::SbbImmediateToRm { rm, immediate }
 }
 
-fn parse_0b01001xxx_dec_word_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b01001xxx_dec_word_reg<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Dec {
         rm: RegMemOperand::Reg(RegOperand::Reg16(word_reg)),
     }
 }
 
-fn parse_0b001110xx_cmp_rm_to_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b001110xx_cmp_rm_to_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // SUB - Register/memory to/from register
 
     let is_reg_dst = b1 & 0b10 != 0;
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -465,7 +476,7 @@ fn parse_0b001110xx_cmp_rm_to_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Inst
     }
 }
 
-fn parse_0b0011110x_cmp_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b0011110x_cmp_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     // SUB - Immediate to accumulator
 
     let is_word = b1 & 0b01 != 0;
@@ -476,10 +487,10 @@ fn parse_0b0011110x_cmp_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<
     Instruction::CmpImmediateToRm { rm, immediate }
 }
 
-fn parse_0b100000xx_combine_immediate_to_rm<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b100000xx_combine_immediate_to_rm<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let rm = parse_modrm(is_word, b2, input).unwrap();
     let immediate = {
@@ -510,20 +521,17 @@ fn parse_0b100000xx_combine_immediate_to_rm<R: Read>(b1: u8, input: &mut Bytes<R
     }
 }
 
-fn parse_0b00111111_aas<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b00111111_aas<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Aas
 }
 
-fn parse_0b00101111_das<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b00101111_das<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Das
 }
 
-fn parse_0b1111011x_test_not_neg_mul_imul_div_idiv<R: Read>(
-    b1: u8,
-    input: &mut Bytes<R>,
-) -> Instruction {
+fn parse_0b1111011x_test_not_neg_mul_imul_div_idiv<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
     let rm = parse_modrm(is_word, b2, input).unwrap();
     match (b2 >> 3) & 0b111 {
         0b000 => {
@@ -541,30 +549,30 @@ fn parse_0b1111011x_test_not_neg_mul_imul_div_idiv<R: Read>(
     }
 }
 
-fn parse_0b11010100_aam<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let b2 = next_byte_or_panic!(input);
+fn parse_0b11010100_aam<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let b2 = next_byte_or_panic(input);
     assert_eq!(b2, 0b00001010);
     Instruction::Aam
 }
 
-fn parse_0b11010101_aad<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let b2 = next_byte_or_panic!(input);
+fn parse_0b11010101_aad<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let b2 = next_byte_or_panic(input);
     assert_eq!(b2, 0b00001010);
     Instruction::Aad
 }
 
-fn parse_0b10011000_cbw<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b10011000_cbw<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Cbw
 }
 
-fn parse_0b10011001_cwd<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b10011001_cwd<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Cwd
 }
 
-fn parse_0b110100xx_shift<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b110100xx_shift<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let count = b1 & 0b10 != 0;
     let is_word = b1 & 0b01 != 0;
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
     let rm = parse_modrm(is_word, b2, input).unwrap();
     match (b2 >> 3) & 0b111 {
         0b000 => Instruction::Rol { count, rm },
@@ -579,11 +587,11 @@ fn parse_0b110100xx_shift<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction 
     }
 }
 
-fn parse_0b001000xx_and_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b001000xx_and_rm_to_from_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_reg_dst = b1 & 0b10 != 0;
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -599,10 +607,10 @@ fn parse_0b001000xx_and_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
 // NOTE(photobaric): This opcode is based off Page 4-31, the opcode on Page 4-25 is wrong (that codes for ADC)
 //  Also note that there is no direction bit as Page 4-25 implies.
 //  This makes sense since the test instruction is commutative.
-fn parse_0b1000010x_test_rm_with_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1000010x_test_rm_with_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -611,11 +619,11 @@ fn parse_0b1000010x_test_rm_with_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> I
     Instruction::TestRmWithReg { reg, rm }
 }
 
-fn parse_0b000010xx_or_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b000010xx_or_rm_to_from_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_reg_dst = b1 & 0b10 != 0;
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -628,11 +636,11 @@ fn parse_0b000010xx_or_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> 
     }
 }
 
-fn parse_0b001100xx_xor_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b001100xx_xor_rm_to_from_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_reg_dst = b1 & 0b10 != 0;
     let is_word = b1 & 0b01 != 0;
 
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
 
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
@@ -645,7 +653,7 @@ fn parse_0b001100xx_xor_rm_to_from_reg<R: Read>(b1: u8, input: &mut Bytes<R>) ->
     }
 }
 
-fn parse_0b0010010x_and_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b0010010x_and_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
 
     let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
@@ -654,10 +662,7 @@ fn parse_0b0010010x_and_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<
     Instruction::AndImmediateToRm { rm, immediate }
 }
 
-fn parse_0b1010100x_test_immediate_to_acc_reg<R: Read>(
-    b1: u8,
-    input: &mut Bytes<R>,
-) -> Instruction {
+fn parse_0b1010100x_test_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
 
     let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
@@ -666,7 +671,7 @@ fn parse_0b1010100x_test_immediate_to_acc_reg<R: Read>(
     Instruction::TestImmediateToRm { rm, immediate }
 }
 
-fn parse_0b0000110x_or_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b0000110x_or_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
 
     let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
@@ -675,7 +680,7 @@ fn parse_0b0000110x_or_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R
     Instruction::OrImmediateToRm { rm, immediate }
 }
 
-fn parse_0b0011010x_xor_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b0011010x_xor_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
 
     let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
@@ -684,235 +689,232 @@ fn parse_0b0011010x_xor_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<
     Instruction::XorImmediateToRm { rm, immediate }
 }
 
-fn parse_0b1010010x_movs<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1010010x_movs<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
     Instruction::Movs { is_word }
 }
 
-fn parse_0b1010011x_cmps<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1010011x_cmps<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
     Instruction::Cmps { is_word }
 }
 
-fn parse_0b1010111x_scas<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1010111x_scas<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
     Instruction::Scas { is_word }
 }
 
-fn parse_0b1010110x_lods<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1010110x_lods<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
     Instruction::Lods { is_word }
 }
 
-fn parse_0b1010101x_stos<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1010101x_stos<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
     Instruction::Stos { is_word }
 }
 
-fn parse_0b11101000_call_direct<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11101000_call_direct<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let ip_inc16 = parse_immediate_word(input).unwrap() as i16;
     Instruction::CallDirect { ip_inc16 }
 }
 
-fn parse_0b10011010_call_direct_intersegment<R: Read>(
-    _b1: u8,
-    input: &mut Bytes<R>,
-) -> Instruction {
+fn parse_0b10011010_call_direct_intersegment<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let ip = parse_immediate_word(input).unwrap();
     let cs = parse_immediate_word(input).unwrap();
     Instruction::CallDirectIntersegment { ip, cs }
 }
 
-fn parse_0b11101001_jmp_direct<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11101001_jmp_direct<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let ip_inc16 = parse_immediate_word(input).unwrap() as i16;
     Instruction::JmpDirect { ip_inc16 }
 }
 
-fn parse_0b11101011_jmp_direct_short<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11101011_jmp_direct_short<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let ip_inc8 = parse_immediate_byte(input).unwrap() as i8;
     Instruction::JmpDirectShort { ip_inc8 }
 }
 
-fn parse_0b11101010_jmp_direct_intersegment<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11101010_jmp_direct_intersegment<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let ip = parse_immediate_word(input).unwrap();
     let cs = parse_immediate_word(input).unwrap();
     Instruction::JmpDirectIntersegment { ip, cs }
 }
 
-fn parse_0b11000011_ret<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11000011_ret<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Ret { sp_add: 0 }
 }
 
-fn parse_0b11000010_ret_sp_add<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11000010_ret_sp_add<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let sp_add = parse_immediate_word(input).unwrap();
     Instruction::Ret { sp_add }
 }
 
-fn parse_0b11001011_ret_intersegment<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11001011_ret_intersegment<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::RetIntersegment { sp_add: 0 }
 }
 
-fn parse_0b11001010_ret_intersegment_sp_add<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11001010_ret_intersegment_sp_add<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let sp_add = parse_immediate_word(input).unwrap();
     Instruction::RetIntersegment { sp_add }
 }
 
-fn parse_0b01110000_jo<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01110000_jo<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::Jo { ip_inc8 }
 }
 
-fn parse_0b01110001_jno<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01110001_jno<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::Jno { ip_inc8 }
 }
 
-fn parse_0b01110010_jb_jnae<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01110010_jb_jnae<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JbJnae { ip_inc8 }
 }
 
-fn parse_0b01110011_jnb_jae<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01110011_jnb_jae<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JnbJae { ip_inc8 }
 }
 
-fn parse_0b01110100_je_jz<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01110100_je_jz<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JeJz { ip_inc8 }
 }
 
-fn parse_0b01110101_jne_jnz<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01110101_jne_jnz<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JneJnz { ip_inc8 }
 }
 
-fn parse_0b01110110_jbe_jna<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01110110_jbe_jna<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JbeJna { ip_inc8 }
 }
 
-fn parse_0b01110111_jnbe_ja<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01110111_jnbe_ja<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JnbeJa { ip_inc8 }
 }
 
-fn parse_0b01111000_js<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01111000_js<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::Js { ip_inc8 }
 }
 
-fn parse_0b01111001_jns<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01111001_jns<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::Jns { ip_inc8 }
 }
 
-fn parse_0b01111010_jp_jpe<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01111010_jp_jpe<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JpJpe { ip_inc8 }
 }
 
-fn parse_0b01111011_jnp_jpo<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01111011_jnp_jpo<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JnpJpo { ip_inc8 }
 }
 
-fn parse_0b01111100_jl_jnge<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01111100_jl_jnge<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JlJnge { ip_inc8 }
 }
 
-fn parse_0b01111101_jnl_jge<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01111101_jnl_jge<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JnlJge { ip_inc8 }
 }
 
-fn parse_0b01111110_jle_jng<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01111110_jle_jng<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JleJng { ip_inc8 }
 }
 
-fn parse_0b01111111_jnle_jg<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b01111111_jnle_jg<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::JnleJg { ip_inc8 }
 }
 
-fn parse_0b11100000_loopne_loopnz<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b11100000_loopne_loopnz<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::LoopneLoopnz { ip_inc8 }
 }
 
-fn parse_0b11100001_loope_loopz<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b11100001_loope_loopz<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::LoopeLoopz { ip_inc8 }
 }
 
-fn parse_0b11100010_loop<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b11100010_loop<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::Loop { ip_inc8 }
 }
 
-fn parse_0b11100011_jcxz<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let ip_inc8: i8 = next_byte_or_panic!(input) as i8;
+fn parse_0b11100011_jcxz<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let ip_inc8: i8 = next_byte_or_panic(input) as i8;
     Instruction::Jcxz { ip_inc8 }
 }
 
-fn parse_0b11001101_int<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11001101_int<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let interrupt_type = parse_immediate_byte(input).unwrap();
     Instruction::Int { interrupt_type }
 }
 
-fn parse_0b11001100_int3<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11001100_int3<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Int3
 }
 
-fn parse_0b11001110_into<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11001110_into<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Into
 }
 
-fn parse_0b11001111_iret<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11001111_iret<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Iret
 }
 
-fn parse_0b11111000_clc<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11111000_clc<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Clc
 }
 
-fn parse_0b11110101_cmc<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11110101_cmc<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Cmc
 }
 
-fn parse_0b11111001_stc<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11111001_stc<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Stc
 }
 
-fn parse_0b11111100_cld<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11111100_cld<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Cld
 }
 
-fn parse_0b11111101_std<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11111101_std<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Std
 }
 
-fn parse_0b11111010_cli<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11111010_cli<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Cli
 }
 
-fn parse_0b11111011_sti<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11111011_sti<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Sti
 }
 
-fn parse_0b11110100_hlt<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11110100_hlt<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Hlt
 }
 
-fn parse_0b10011011_wait<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b10011011_wait<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Wait
 }
 
-fn parse_0b11011xxx_esc<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11011xxx_esc<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let xxx = b1 & 0b111;
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
     let yyy = b2 & 0b111_000;
     let external_opcode = yyy | xxx;
     let rm = parse_modrm(true, b2, input).unwrap();
@@ -922,46 +924,46 @@ fn parse_0b11011xxx_esc<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
     }
 }
 
-fn parse_0b01010xxx_push_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b01010xxx_push_reg<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Push {
         rm: RegMemOperand::Reg(RegOperand::Reg16(word_reg)),
     }
 }
 
-fn parse_0b000xx110_push_segment_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b000xx110_push_segment_reg<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let segment_reg = SegmentReg::try_from((b1 & 0b11000) >> 3).unwrap();
     Instruction::PushSegmentReg { segment_reg }
 }
 
-fn parse_0b10001111_pop_rm<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let b2 = next_byte_or_panic!(input);
+fn parse_0b10001111_pop_rm<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let b2 = next_byte_or_panic(input);
     let rm = parse_modrm(true, b2, input).unwrap();
     Instruction::Pop { rm }
 }
 
-fn parse_0b01011xxx_pop_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b01011xxx_pop_reg<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Pop {
         rm: RegMemOperand::Reg(RegOperand::Reg16(word_reg)),
     }
 }
 
-fn parse_0b000xx111_pop_segment_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b000xx111_pop_segment_reg<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let segment_reg = SegmentReg::try_from((b1 & 0b11000) >> 3).unwrap();
     Instruction::PopSegmentReg { segment_reg }
 }
 
-fn parse_0b1000011x_xchg_rm_to_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1000011x_xchg_rm_to_reg<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(is_word, reg);
     let rm = parse_modrm(is_word, b2, input).unwrap();
     Instruction::Xchg { reg, rm }
 }
 
-fn parse_0b10010xxx_xchg_reg_to_acc_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b10010xxx_xchg_reg_to_acc_reg<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let word_reg = WordReg::try_from(b1 & 0b111).unwrap();
     Instruction::Xchg {
         reg: RegOperand::Reg16(WordReg::AX),
@@ -969,75 +971,75 @@ fn parse_0b10010xxx_xchg_reg_to_acc_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) 
     }
 }
 
-fn parse_0b1110010x_in_fixed<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1110010x_in_fixed<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
     let port = parse_immediate_byte(input).unwrap();
     Instruction::InFixed { is_word, port }
 }
 
-fn parse_0b1110110x_in_variable<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1110110x_in_variable<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
     Instruction::InVariable { is_word }
 }
 
-fn parse_0b1110011x_out_fixed<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1110011x_out_fixed<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
     let port = parse_immediate_byte(input).unwrap();
     Instruction::OutFixed { is_word, port }
 }
 
-fn parse_0b1110111x_out_variable<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1110111x_out_variable<R: Read>(b1: u8, _input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
     Instruction::OutVariable { is_word }
 }
 
-fn parse_0b11010111_xlat<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b11010111_xlat<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Xlat
 }
 
-fn parse_0b10001101_lea<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let b2 = next_byte_or_panic!(input);
+fn parse_0b10001101_lea<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let b2 = next_byte_or_panic(input);
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(true, reg);
     let rm = parse_modrm(true, b2, input).unwrap();
     Instruction::Lea { reg, rm }
 }
 
-fn parse_0b11000101_lds<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let b2 = next_byte_or_panic!(input);
+fn parse_0b11000101_lds<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let b2 = next_byte_or_panic(input);
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(true, reg);
     let rm = parse_modrm(true, b2, input).unwrap();
     Instruction::Lds { reg, rm }
 }
 
-fn parse_0b11000100_les<R: Read>(_b1: u8, input: &mut Bytes<R>) -> Instruction {
-    let b2 = next_byte_or_panic!(input);
+fn parse_0b11000100_les<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+    let b2 = next_byte_or_panic(input);
     let reg = (b2 & 0b00111000) >> 3;
     let reg = parse_general_purpose_reg(true, reg);
     let rm = parse_modrm(true, b2, input).unwrap();
     Instruction::Les { reg, rm }
 }
 
-fn parse_0b10011111_lahf<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b10011111_lahf<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Lahf
 }
 
-fn parse_0b10011110_sahf<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b10011110_sahf<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Sahf
 }
 
-fn parse_0b10011100_pushf<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b10011100_pushf<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Pushf
 }
 
-fn parse_0b10011101_popf<R: Read>(_b1: u8, _input: &mut Bytes<R>) -> Instruction {
+fn parse_0b10011101_popf<R: Read>(_b1: u8, _input: &mut R) -> Instruction {
     Instruction::Popf
 }
 
-fn parse_0b1111111x_inc_dec_call_jmp_push_rm<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b1111111x_inc_dec_call_jmp_push_rm<R: Read>(b1: u8, input: &mut R) -> Instruction {
     let is_word = b1 & 1 != 0;
-    let b2 = next_byte_or_panic!(input);
+    let b2 = next_byte_or_panic(input);
     let rm = parse_modrm(is_word, b2, input).unwrap();
     match (b2 >> 3) & 0b111 {
         0b000 => Instruction::Inc { rm },
@@ -1052,21 +1054,21 @@ fn parse_0b1111111x_inc_dec_call_jmp_push_rm<R: Read>(b1: u8, input: &mut Bytes<
     }
 }
 
-fn fail_0b11110000_lock_prefix<R: Read>(b1: u8, _: &mut Bytes<R>) -> Instruction {
+fn fail_0b11110000_lock_prefix<R: Read>(b1: u8, _: &mut R) -> Instruction {
     panic!(
         "Expecting instruction but found lock prefix - first byte {:#010b}",
         b1
     )
 }
 
-fn fail_0b1111001x_rep_prefix<R: Read>(b1: u8, _: &mut Bytes<R>) -> Instruction {
+fn fail_0b1111001x_rep_prefix<R: Read>(b1: u8, _: &mut R) -> Instruction {
     panic!(
         "Expecting instruction but encountered rep prefix - first byte {:#010b}",
         b1
     )
 }
 
-fn fail_0b001xx110_segment_override_prefix<R: Read>(b1: u8, _: &mut Bytes<R>) -> Instruction {
+fn fail_0b001xx110_segment_override_prefix<R: Read>(b1: u8, _: &mut R) -> Instruction {
     panic!(
         "Expecting instruction but encountered segment override prefix - first byte {:#010b}",
         b1
@@ -1075,13 +1077,13 @@ fn fail_0b001xx110_segment_override_prefix<R: Read>(b1: u8, _: &mut Bytes<R>) ->
 
 macro_rules! generate_jump_tables {
     ($($bits:literal => $parse_func:ident),+ $(,)?) => {
-        pub fn parse_instruction<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+        pub fn parse_instruction<R: Read>(b1: u8, input: &mut R) -> Instruction {
             match b1 {
                 $($bits => $parse_func(b1, input)),*
             }
         }
 
-        pub type ParseFunc<R> = fn(u8, &mut Bytes<R>) -> Instruction;
+        pub type ParseFunc<R> = fn(u8, &mut R) -> Instruction;
 
         pub fn construct_jump_table<R: Read>() -> [ParseFunc<R>; 256] {
             let mut t: [ParseFunc<R>; 256] = [fail_unimplemented; 256];
@@ -1369,9 +1371,9 @@ fn parse_0b001xx110_segment_override_prefix(b1: u8, prefix_state: PrefixState) -
     prefix_state.activate_segment_override_prefix(sr)
 }
 
-pub fn parse_prefixed_instruction<R: Read, F: FnMut(u8, &mut Bytes<R>) -> Instruction>(
+pub fn parse_prefixed_instruction<R: Read, F: FnMut(u8, &mut R) -> Instruction>(
     mut b1: u8,
-    input: &mut Bytes<R>,
+    input: &mut R,
     mut parse_func: F,
 ) -> PrefixedInstruction {
     let mut prefix_state = PrefixState::default();
@@ -1392,7 +1394,7 @@ pub fn parse_prefixed_instruction<R: Read, F: FnMut(u8, &mut Bytes<R>) -> Instru
                 return PrefixedInstruction(instruction, prefix_state);
             }
         };
-        b1 = next_byte_or_panic!(input);
+        b1 = next_byte_or_panic(input);
     }
 }
 

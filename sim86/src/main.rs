@@ -31,7 +31,8 @@ fn main() {
             let mut buffer: Vec<u8> = Vec::new();
             stdin.read_to_end(&mut buffer).unwrap();
             drop(stdin);
-            let input: Cursor<Vec<u8>> = Cursor::new(buffer);
+            let buffer: &[u8] = &buffer;
+            let input: Cursor<&[u8]> = Cursor::new(buffer);
 
             writeln!(stdout, "trace:").unwrap();
             let final_machine_state = execute_with_trace(input, &mut stdout);
