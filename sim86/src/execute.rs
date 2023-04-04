@@ -9,6 +9,7 @@ use crate::model::{
 pub struct MachineState {
     pub gprs: [u16; 8],
     pub srs: [u16; 4],
+    pub ip_reg: u16,
     pub flags_reg: u16,
 }
 
@@ -459,6 +460,7 @@ pub enum Reg {
     Reg8(ByteReg),
     Reg16(WordReg),
     SegmentReg(SegmentReg),
+    IpReg,
     FlagsReg,
 }
 
@@ -477,9 +479,12 @@ impl MachineState {
                 let value = self.srs[segment_reg as usize];
                 writeln!(output, "{}: {:#06x} ({})", segment_reg, value, value)?;
             }
+            Reg::IpReg => {
+                writeln!(output, "ip: {}", self.ip_reg)?;
+            }
             Reg::FlagsReg => {
                 let value = self.flags_reg;
-                writeln!(output, "flags: {}", Flags(value),)?;
+                writeln!(output, "flags: {}", Flags(value))?;
             }
         }
         Ok(())
@@ -498,6 +503,8 @@ impl MachineState {
             writeln!(output, "{}: {:#06x} ({})", sr, value, value)?;
         }
 
+        writeln!(output, "ip: {}", self.ip_reg)?;
+
         writeln!(output, "flags: {}", Flags(self.flags_reg))?;
 
         Ok(())
@@ -508,6 +515,7 @@ impl MachineState {
 pub enum MachineStateDiff {
     Gpr(WordReg, u16, u16),
     Sr(SegmentReg, u16, u16),
+    IpReg(u16, u16),
     FlagsReg(u16, u16),
 }
 
@@ -516,6 +524,7 @@ impl ::std::fmt::Display for MachineStateDiff {
         match self {
             MachineStateDiff::Gpr(gpr, prev, next) => write!(f, "{}:{:#x}->{:#x}", gpr, prev, next),
             MachineStateDiff::Sr(sr, prev, next) => write!(f, "{}:{:#x}->{:#x}", sr, prev, next),
+            MachineStateDiff::IpReg(prev, next) => write!(f, "ip:{:#x}->{:#x}", prev, next),
             MachineStateDiff::FlagsReg(prev, next) => {
                 write!(f, "flags:{}->{}", Flags(*prev), Flags(*next))
             }
@@ -584,10 +593,18 @@ impl MachineStateDiff {
             }
         }
         {
-            let prev_flags_reg = prev_state.flags_reg;
-            let next_flags_reg = next_state.flags_reg;
-            if prev_flags_reg != next_flags_reg {
-                let diff = MachineStateDiff::FlagsReg(prev_flags_reg, next_flags_reg);
+            let prev_ip = prev_state.ip_reg;
+            let next_ip = next_state.ip_reg;
+            if prev_ip != next_ip {
+                let diff = MachineStateDiff::IpReg(prev_ip, next_ip);
+                process_diff(diff);
+            }
+        }
+        {
+            let prev_flags = prev_state.flags_reg;
+            let next_flags = next_state.flags_reg;
+            if prev_flags != next_flags {
+                let diff = MachineStateDiff::FlagsReg(prev_flags, next_flags);
                 process_diff(diff);
             }
         }
