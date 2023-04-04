@@ -50,13 +50,13 @@ pub fn execute_with_trace<R: Read, W: Write>(input: R, output: &mut W) -> execut
         let instruction =
             parse::parse_prefixed_instruction(b1, &mut input, parse::parse_instruction);
 
-        write!(output, "{}", instruction).unwrap();
+        write!(output, "{} ;", instruction).unwrap();
 
         let prev_machine_state = machine_state.clone();
         machine_state.execute_instruction(instruction);
 
         execute::MachineStateDiff::diff(&prev_machine_state, &machine_state, |diff| {
-            write!(output, " ; {}", diff).unwrap();
+            write!(output, " {}", diff).unwrap();
         });
 
         writeln!(output).unwrap();

@@ -446,7 +446,7 @@ fn parse_0b01001xxx_dec_word_reg<R: Read>(b1: u8, _input: &mut Bytes<R>) -> Inst
     }
 }
 
-fn parse_0b001110xx_cmp_rm_with_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
+fn parse_0b001110xx_cmp_rm_to_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
     // SUB - Register/memory to/from register
 
     let is_reg_dst = b1 & 0b10 != 0;
@@ -458,17 +458,14 @@ fn parse_0b001110xx_cmp_rm_with_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> In
     let reg = parse_general_purpose_reg(is_word, reg);
     let rm = parse_modrm(is_word, b2, input).unwrap();
 
-    Instruction::CmpRmWithReg {
+    Instruction::CmpRmToReg {
         is_reg_dst,
         reg,
         rm,
     }
 }
 
-fn parse_0b0011110x_cmp_immediate_with_acc_reg<R: Read>(
-    b1: u8,
-    input: &mut Bytes<R>,
-) -> Instruction {
+fn parse_0b0011110x_cmp_immediate_to_acc_reg<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
     // SUB - Immediate to accumulator
 
     let is_word = b1 & 0b01 != 0;
@@ -476,7 +473,7 @@ fn parse_0b0011110x_cmp_immediate_with_acc_reg<R: Read>(
     let rm = RegMemOperand::Reg(parse_accumulator_reg(is_word));
     let immediate = parse_immediate(is_word, input).unwrap();
 
-    Instruction::CmpImmediateWithRm { rm, immediate }
+    Instruction::CmpImmediateToRm { rm, immediate }
 }
 
 fn parse_0b100000xx_combine_immediate_to_rm<R: Read>(b1: u8, input: &mut Bytes<R>) -> Instruction {
@@ -508,7 +505,7 @@ fn parse_0b100000xx_combine_immediate_to_rm<R: Read>(b1: u8, input: &mut Bytes<R
         0b100 => Instruction::AndImmediateToRm { rm, immediate },
         0b101 => Instruction::SubImmediateToRm { rm, immediate },
         0b110 => Instruction::XorImmediateToRm { rm, immediate },
-        0b111 => Instruction::CmpImmediateWithRm { rm, immediate },
+        0b111 => Instruction::CmpImmediateToRm { rm, immediate },
         _ => unreachable!(),
     }
 }
@@ -1155,12 +1152,12 @@ generate_jump_tables! {
     0b00110101 => parse_0b0011010x_xor_immediate_to_acc_reg,
     0b00110110 => fail_0b001xx110_segment_override_prefix,
     0b00110111 => parse_0b00110111_aaa,
-    0b00111000 => parse_0b001110xx_cmp_rm_with_reg,
-    0b00111001 => parse_0b001110xx_cmp_rm_with_reg,
-    0b00111010 => parse_0b001110xx_cmp_rm_with_reg,
-    0b00111011 => parse_0b001110xx_cmp_rm_with_reg,
-    0b00111100 => parse_0b0011110x_cmp_immediate_with_acc_reg,
-    0b00111101 => parse_0b0011110x_cmp_immediate_with_acc_reg,
+    0b00111000 => parse_0b001110xx_cmp_rm_to_reg,
+    0b00111001 => parse_0b001110xx_cmp_rm_to_reg,
+    0b00111010 => parse_0b001110xx_cmp_rm_to_reg,
+    0b00111011 => parse_0b001110xx_cmp_rm_to_reg,
+    0b00111100 => parse_0b0011110x_cmp_immediate_to_acc_reg,
+    0b00111101 => parse_0b0011110x_cmp_immediate_to_acc_reg,
     0b00111110 => fail_0b001xx110_segment_override_prefix,
     0b00111111 => parse_0b00111111_aas,
     0b01000000 => parse_0b01000xxx_inc_word_reg,

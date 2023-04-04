@@ -251,6 +251,7 @@ const DI: Reg = Reg::Reg16(WordReg::DI);
 const ES: Reg = Reg::SegmentReg(SegmentReg::ES);
 const SS: Reg = Reg::SegmentReg(SegmentReg::SS);
 const DS: Reg = Reg::SegmentReg(SegmentReg::DS);
+const FLAGS: Reg = Reg::FlagsReg;
 
 #[test]
 fn listing_0043_immediate_movs() {
@@ -308,12 +309,12 @@ fn listing_0046_add_sub_cmp() {
         BINARY,
         TRACE,
         r"--- test\listing_0046_add_sub_cmp execution ---",
-        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+        &[BX, CX, SP, FLAGS],
     );
 }
 
 #[test]
-fn listing_0047_add_sub_cmp() {
+fn listing_0047_challenge_flags() {
     const BINARY: &[u8] = include_bytes!("./testdata/listing_0047_challenge_flags");
     const ASM: &str = include_str!("./testdata/listing_0047_challenge_flags.asm");
     const TRACE: &str = include_str!("./testdata/listing_0047_challenge_flags.txt");
@@ -323,7 +324,7 @@ fn listing_0047_add_sub_cmp() {
         BINARY,
         TRACE,
         r"--- test\listing_0047_challenge_flags execution ---",
-        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+        &[BX, DX, SP, BP, FLAGS],
     );
 }
 

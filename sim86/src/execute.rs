@@ -9,6 +9,42 @@ use crate::model::{
 pub struct MachineState {
     pub gprs: [u16; 8],
     pub srs: [u16; 4],
+    pub flags_reg: u16,
+}
+
+macro_rules! rw_flag {
+    ($read_flag_fn:ident, $write_flag_fn:ident, $bitpos:literal) => {
+        pub fn $read_flag_fn(flags: u16) -> bool {
+            flags & (1 << $bitpos) != 0
+        }
+
+        pub fn $write_flag_fn(&mut self, flag: bool) {
+            let flag: u16 = flag.into();
+            // TODO(photobaric): Need two dependent ops?
+            // see https://stackoverflow.com/questions/47981/how-do-i-set-clear-and-toggle-a-single-bit
+            self.flags_reg &= !(1 << $bitpos);
+            self.flags_reg |= (flag << $bitpos);
+        }
+    };
+}
+
+macro_rules! compute_af {
+    ($a:ident, $b:ident, $r:ident) => {
+        // AF is basically the CF but looking at the 4th bit instead of the 8th bit.
+        // We want the following truth table for the 5th bit:
+        // a, b, res, af
+        // 0, 0, 0, 0
+        // 0, 0, 1, 1
+        // 0, 1, 0, 1
+        // 0, 1, 1, 0
+        // 1, 0, 0, 1
+        // 1, 0, 1, 0
+        // 1, 1, 0, 0
+        // 1, 1, 1, 1
+        // Note that this is the same bit pattern as a full adder
+        // which is implemented as two XOR gates.
+        ($a ^ $b ^ $r) & 0b10000 != 0
+    };
 }
 
 impl MachineState {
@@ -21,10 +57,33 @@ impl MachineState {
                 rm,
             } => match rm {
                 RegMemOperand::Reg(rm_reg) => {
+                    pub fn mov_reg_to_reg(
+                        state: &mut MachineState,
+                        dst_reg: RegOperand,
+                        src_reg: RegOperand,
+                    ) {
+                        match (dst_reg, src_reg) {
+                            (RegOperand::Reg8(dst_byte_reg), RegOperand::Reg8(src_byte_reg)) => {
+                                state.write_byte_reg(
+                                    dst_byte_reg,
+                                    state.read_byte_reg(src_byte_reg),
+                                );
+                            }
+                            (RegOperand::Reg16(dst_word_reg), RegOperand::Reg16(src_word_reg)) => {
+                                state.write_word_reg(
+                                    dst_word_reg,
+                                    state.read_word_reg(src_word_reg),
+                                );
+                            }
+
+                            (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
+                            (RegOperand::Reg16(_), RegOperand::Reg8(_)) => unreachable!(),
+                        };
+                    }
                     if is_reg_dst {
-                        self.mov_reg_to_reg(reg, rm_reg)
+                        mov_reg_to_reg(self, reg, rm_reg)
                     } else {
-                        self.mov_reg_to_reg(rm_reg, reg)
+                        mov_reg_to_reg(self, rm_reg, reg)
                     }
                 }
                 RegMemOperand::Mem(_) => todo!(),
@@ -59,6 +118,282 @@ impl MachineState {
                 },
                 RegMemOperand::Mem(_) => todo!(),
             },
+
+            Instruction::AddRmToFromReg {
+                is_reg_dst,
+                reg,
+                rm,
+            } => match rm {
+                RegMemOperand::Reg(rm_reg) => {
+                    pub fn add_reg_to_reg(
+                        state: &mut MachineState,
+                        dst_reg: RegOperand,
+                        src_reg: RegOperand,
+                    ) {
+                        match (dst_reg, src_reg) {
+                            (RegOperand::Reg8(dst_reg), RegOperand::Reg8(src_reg)) => {
+                                let dst_value = state.read_byte_reg(dst_reg);
+                                let src_value = state.read_byte_reg(src_reg);
+
+                                let (result, cf) = u8::overflowing_add(dst_value, src_value);
+                                let (_, of) = i8::overflowing_add(dst_value as i8, src_value as i8);
+                                state.write_byte_reg(dst_reg, result);
+                                state.write_cf(cf);
+                                state.write_of(of);
+                                state.write_sf((result as i8) < 0);
+                                state.write_pf((result as u8).count_ones() % 2 == 0);
+                                state.write_zf(result == 0);
+
+                                state.write_af(compute_af!(dst_value, src_value, result));
+                            }
+                            (RegOperand::Reg16(dst_reg), RegOperand::Reg16(src_reg)) => {
+                                let dst_value = state.read_word_reg(dst_reg);
+                                let src_value = state.read_word_reg(src_reg);
+
+                                let (result, cf) = u16::overflowing_add(dst_value, src_value);
+                                let (_, of) =
+                                    i16::overflowing_add(dst_value as i16, src_value as i16);
+                                state.write_word_reg(dst_reg, result);
+                                state.write_cf(cf);
+                                state.write_of(of);
+                                state.write_sf((result as i16) < 0);
+                                state.write_pf((result as u8).count_ones() % 2 == 0);
+                                state.write_zf(result == 0);
+
+                                state.write_af(compute_af!(dst_value, src_value, result));
+                            }
+
+                            (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
+                            (RegOperand::Reg16(_), RegOperand::Reg8(_)) => unreachable!(),
+                        };
+                    }
+                    if is_reg_dst {
+                        add_reg_to_reg(self, reg, rm_reg)
+                    } else {
+                        add_reg_to_reg(self, rm_reg, reg)
+                    }
+                }
+                RegMemOperand::Mem(_) => todo!(),
+            },
+            Instruction::AddImmediateToRm { rm, immediate } => match rm {
+                RegMemOperand::Reg(reg) => match (reg, immediate) {
+                    (RegOperand::Reg8(reg), ByteOrWord::Byte(b)) => {
+                        let a = self.read_byte_reg(reg);
+
+                        let (r, cf) = u8::overflowing_add(a, b);
+                        let (_, of) = i8::overflowing_add(a as i8, b as i8);
+                        self.write_byte_reg(reg, r);
+                        self.write_cf(cf);
+                        self.write_of(of);
+                        self.write_sf((r as i8) < 0);
+                        self.write_pf((r as u8).count_ones() % 2 == 0);
+                        self.write_zf(r == 0);
+
+                        self.write_af(compute_af!(a, b, r));
+                    }
+                    (RegOperand::Reg16(reg), ByteOrWord::Word(b)) => {
+                        let a = self.read_word_reg(reg);
+
+                        let (r, cf) = u16::overflowing_add(a, b);
+                        let (_, of) = i16::overflowing_add(a as i16, b as i16);
+                        self.write_word_reg(reg, r);
+                        self.write_cf(cf);
+                        self.write_of(of);
+                        self.write_sf((r as i16) < 0);
+                        self.write_pf((r as u8).count_ones() % 2 == 0);
+                        self.write_zf(r == 0);
+
+                        self.write_af(compute_af!(a, b, r));
+                    }
+
+                    (RegOperand::Reg8(_), ByteOrWord::Word(_)) => unreachable!(),
+                    (RegOperand::Reg16(_), ByteOrWord::Byte(_)) => unreachable!(),
+                },
+                RegMemOperand::Mem(_) => todo!(),
+            },
+
+            Instruction::SubRmToFromReg {
+                is_reg_dst,
+                reg,
+                rm,
+            } => match rm {
+                RegMemOperand::Reg(rm_reg) => {
+                    pub fn sub_reg_to_reg(
+                        state: &mut MachineState,
+                        dst_reg: RegOperand,
+                        src_reg: RegOperand,
+                    ) {
+                        match (dst_reg, src_reg) {
+                            (RegOperand::Reg8(dst_reg), RegOperand::Reg8(src_reg)) => {
+                                let dst_value = state.read_byte_reg(dst_reg);
+                                let src_value = state.read_byte_reg(src_reg);
+
+                                let (result, cf) = u8::overflowing_sub(dst_value, src_value);
+                                let (_, of) = i8::overflowing_sub(dst_value as i8, src_value as i8);
+                                state.write_byte_reg(dst_reg, result);
+                                state.write_cf(cf);
+                                state.write_of(of);
+                                state.write_sf((result as i8) < 0);
+                                state.write_pf((result as u8).count_ones() % 2 == 0);
+                                state.write_zf(result == 0);
+
+                                state.write_af(compute_af!(dst_value, src_value, result));
+                            }
+                            (RegOperand::Reg16(dst_reg), RegOperand::Reg16(src_reg)) => {
+                                let dst_value = state.read_word_reg(dst_reg);
+                                let src_value = state.read_word_reg(src_reg);
+
+                                let (result, cf) = u16::overflowing_sub(dst_value, src_value);
+                                let (_, of) =
+                                    i16::overflowing_sub(dst_value as i16, src_value as i16);
+                                state.write_word_reg(dst_reg, result);
+                                state.write_cf(cf);
+                                state.write_of(of);
+                                state.write_sf((result as i16) < 0);
+                                state.write_pf((result as u8).count_ones() % 2 == 0);
+                                state.write_zf(result == 0);
+
+                                state.write_af(compute_af!(dst_value, src_value, result));
+                            }
+
+                            (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
+                            (RegOperand::Reg16(_), RegOperand::Reg8(_)) => unreachable!(),
+                        };
+                    }
+                    if is_reg_dst {
+                        sub_reg_to_reg(self, reg, rm_reg)
+                    } else {
+                        sub_reg_to_reg(self, rm_reg, reg)
+                    }
+                }
+                RegMemOperand::Mem(_) => todo!(),
+            },
+            Instruction::SubImmediateToRm { rm, immediate } => match rm {
+                RegMemOperand::Reg(reg) => match (reg, immediate) {
+                    (RegOperand::Reg8(reg), ByteOrWord::Byte(b)) => {
+                        let a = self.read_byte_reg(reg);
+
+                        let (r, cf) = u8::overflowing_sub(a, b);
+                        let (_, of) = i8::overflowing_sub(a as i8, b as i8);
+                        self.write_byte_reg(reg, r);
+                        self.write_cf(cf);
+                        self.write_of(of);
+                        self.write_sf((r as i8) < 0);
+                        self.write_pf((r as u8).count_ones() % 2 == 0);
+                        self.write_zf(r == 0);
+
+                        self.write_af(compute_af!(a, b, r));
+                    }
+                    (RegOperand::Reg16(reg), ByteOrWord::Word(b)) => {
+                        let a = self.read_word_reg(reg);
+
+                        let (r, cf) = u16::overflowing_sub(a, b);
+                        let (_, of) = i16::overflowing_sub(a as i16, b as i16);
+                        self.write_word_reg(reg, r);
+                        self.write_cf(cf);
+                        self.write_of(of);
+                        self.write_sf((r as i16) < 0);
+                        self.write_pf((r as u8).count_ones() % 2 == 0);
+                        self.write_zf(r == 0);
+
+                        self.write_af(compute_af!(a, b, r));
+                    }
+
+                    (RegOperand::Reg8(_), ByteOrWord::Word(_)) => unreachable!(),
+                    (RegOperand::Reg16(_), ByteOrWord::Byte(_)) => unreachable!(),
+                },
+                RegMemOperand::Mem(_) => todo!(),
+            },
+
+            Instruction::CmpRmToReg {
+                is_reg_dst,
+                reg,
+                rm,
+            } => match rm {
+                RegMemOperand::Reg(rm_reg) => {
+                    pub fn cmp_reg_to_reg(
+                        state: &mut MachineState,
+                        dst_reg: RegOperand,
+                        src_reg: RegOperand,
+                    ) {
+                        match (dst_reg, src_reg) {
+                            (RegOperand::Reg8(dst_reg), RegOperand::Reg8(src_reg)) => {
+                                let dst_value = state.read_byte_reg(dst_reg);
+                                let src_value = state.read_byte_reg(src_reg);
+
+                                let (result, cf) = u8::overflowing_sub(dst_value, src_value);
+                                let (_, of) = i8::overflowing_sub(dst_value as i8, src_value as i8);
+                                state.write_cf(cf);
+                                state.write_of(of);
+                                state.write_sf((result as i8) < 0);
+                                state.write_pf((result as u8).count_ones() % 2 == 0);
+                                state.write_zf(result == 0);
+
+                                state.write_af(compute_af!(dst_value, src_value, result));
+                            }
+                            (RegOperand::Reg16(dst_reg), RegOperand::Reg16(src_reg)) => {
+                                let dst_value = state.read_word_reg(dst_reg);
+                                let src_value = state.read_word_reg(src_reg);
+
+                                let (result, cf) = u16::overflowing_sub(dst_value, src_value);
+                                let (_, of) =
+                                    i16::overflowing_sub(dst_value as i16, src_value as i16);
+                                state.write_cf(cf);
+                                state.write_of(of);
+                                state.write_sf((result as i16) < 0);
+                                state.write_pf((result as u8).count_ones() % 2 == 0);
+                                state.write_zf(result == 0);
+
+                                state.write_af(compute_af!(dst_value, src_value, result));
+                            }
+
+                            (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
+                            (RegOperand::Reg16(_), RegOperand::Reg8(_)) => unreachable!(),
+                        };
+                    }
+                    if is_reg_dst {
+                        cmp_reg_to_reg(self, reg, rm_reg)
+                    } else {
+                        cmp_reg_to_reg(self, rm_reg, reg)
+                    }
+                }
+                RegMemOperand::Mem(_) => todo!(),
+            },
+            Instruction::CmpImmediateToRm { rm, immediate } => match rm {
+                RegMemOperand::Reg(reg) => match (reg, immediate) {
+                    (RegOperand::Reg8(reg), ByteOrWord::Byte(b)) => {
+                        let a = self.read_byte_reg(reg);
+
+                        let (r, cf) = u8::overflowing_sub(a, b);
+                        let (_, of) = i8::overflowing_sub(a as i8, b as i8);
+                        self.write_cf(cf);
+                        self.write_of(of);
+                        self.write_sf((r as i8) < 0);
+                        self.write_pf((r as u8).count_ones() % 2 == 0);
+                        self.write_zf(r == 0);
+
+                        self.write_af(compute_af!(a, b, r));
+                    }
+                    (RegOperand::Reg16(reg), ByteOrWord::Word(b)) => {
+                        let a = self.read_word_reg(reg);
+
+                        let (r, cf) = u16::overflowing_sub(a, b);
+                        let (_, of) = i16::overflowing_sub(a as i16, b as i16);
+                        self.write_cf(cf);
+                        self.write_of(of);
+                        self.write_sf((r as i16) < 0);
+                        self.write_pf((r as u8).count_ones() % 2 == 0);
+                        self.write_zf(r == 0);
+
+                        self.write_af(compute_af!(a, b, r));
+                    }
+
+                    (RegOperand::Reg8(_), ByteOrWord::Word(_)) => unreachable!(),
+                    (RegOperand::Reg16(_), ByteOrWord::Byte(_)) => unreachable!(),
+                },
+                RegMemOperand::Mem(_) => todo!(),
+            },
+
             _ => todo!(),
         }
     }
@@ -107,19 +442,16 @@ impl MachineState {
         self.srs[segment_reg as usize] = word;
     }
 
-    pub fn mov_reg_to_reg(&mut self, dst_reg: RegOperand, src_reg: RegOperand) {
-        match (dst_reg, src_reg) {
-            (RegOperand::Reg8(dst_byte_reg), RegOperand::Reg8(src_byte_reg)) => {
-                self.write_byte_reg(dst_byte_reg, self.read_byte_reg(src_byte_reg));
-            }
-            (RegOperand::Reg16(dst_word_reg), RegOperand::Reg16(src_word_reg)) => {
-                self.write_word_reg(dst_word_reg, self.read_word_reg(src_word_reg));
-            }
+    rw_flag!(read_cf, write_cf, 0);
+    rw_flag!(read_pf, write_pf, 2);
+    rw_flag!(read_af, write_af, 4);
+    rw_flag!(read_zf, write_zf, 6);
+    rw_flag!(read_sf, write_sf, 7);
 
-            (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
-            (RegOperand::Reg16(_), RegOperand::Reg8(_)) => unreachable!(),
-        };
-    }
+    rw_flag!(read_tf, write_tf, 8);
+    rw_flag!(read_if, write_if, 9);
+    rw_flag!(read_df, write_df, 10);
+    rw_flag!(read_of, write_of, 11);
 }
 
 #[derive(Clone, Debug)]
@@ -127,6 +459,7 @@ pub enum Reg {
     Reg8(ByteReg),
     Reg16(WordReg),
     SegmentReg(SegmentReg),
+    FlagsReg,
 }
 
 impl MachineState {
@@ -162,6 +495,10 @@ impl MachineState {
                         prefix, segment_reg, value, value
                     )?;
                 }
+                Reg::FlagsReg => {
+                    let value = self.flags_reg;
+                    writeln!(output, "{} flags: {}", prefix, Flags(value),)?;
+                }
             }
         }
         Ok(())
@@ -186,6 +523,7 @@ impl MachineState {
 pub enum MachineStateDiff {
     Gpr(WordReg, u16, u16),
     Sr(SegmentReg, u16, u16),
+    FlagsReg(u16, u16),
 }
 
 impl ::std::fmt::Display for MachineStateDiff {
@@ -193,7 +531,46 @@ impl ::std::fmt::Display for MachineStateDiff {
         match self {
             MachineStateDiff::Gpr(gpr, prev, next) => write!(f, "{}:{:#x}->{:#x}", gpr, prev, next),
             MachineStateDiff::Sr(sr, prev, next) => write!(f, "{}:{:#x}->{:#x}", sr, prev, next),
+            MachineStateDiff::FlagsReg(prev, next) => {
+                write!(f, "flags:{}->{}", Flags(*prev), Flags(*next))
+            }
         }
+    }
+}
+
+pub struct Flags(u16);
+
+impl ::std::fmt::Display for Flags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let flags = self.0;
+        if MachineState::read_cf(flags) {
+            write!(f, "C")?;
+        }
+        if MachineState::read_pf(flags) {
+            write!(f, "P")?;
+        }
+        if MachineState::read_af(flags) {
+            write!(f, "A")?;
+        }
+        if MachineState::read_zf(flags) {
+            write!(f, "Z")?;
+        }
+        if MachineState::read_sf(flags) {
+            write!(f, "S")?;
+        }
+        if MachineState::read_tf(flags) {
+            write!(f, "T")?;
+        }
+        if MachineState::read_if(flags) {
+            write!(f, "I")?;
+        }
+        if MachineState::read_df(flags) {
+            write!(f, "D")?;
+        }
+        if MachineState::read_of(flags) {
+            write!(f, "O")?;
+        }
+        std::fmt::Result::Ok(())
     }
 }
 
@@ -219,6 +596,40 @@ impl MachineStateDiff {
             if prev != next {
                 let diff = MachineStateDiff::Sr(sr, prev, next);
                 process_diff(diff);
+            }
+        }
+        {
+            let prev_flags_reg = prev_state.flags_reg;
+            let next_flags_reg = next_state.flags_reg;
+            if prev_flags_reg != next_flags_reg {
+                let diff = MachineStateDiff::FlagsReg(prev_flags_reg, next_flags_reg);
+                process_diff(diff);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_af_formula() {
+        pub fn compute_af_v1(a: u8, b: u8) -> bool {
+            let (res, _) = u8::overflowing_add(a, b);
+            compute_af!(a, b, res)
+        }
+
+        pub fn compute_af_v2(a: u8, b: u8) -> bool {
+            let a = a << 4;
+            let b = b << 4;
+            let (_, cf) = u8::overflowing_add(a, b);
+            cf
+        }
+
+        for a in 0x00u8..=0xFFu8 {
+            for b in 0x00u8..=0xFFu8 {
+                let af1 = compute_af_v1(a, b);
+                let af2 = compute_af_v2(a, b);
+                assert_eq!(af1, af2, "found disagreement {:#06b} {:#06b}", a, b);
             }
         }
     }

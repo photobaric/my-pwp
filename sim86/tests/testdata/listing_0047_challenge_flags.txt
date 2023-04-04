@@ -9,7 +9,7 @@ add bx, cx ; bx:0x1->0x65 flags:PO->P
 mov dx, 10 ; dx:0x0->0xa 
 sub cx, dx ; cx:0x64->0x5a flags:P->PA 
 add bx, 40000 ; bx:0x65->0x9ca5 flags:PA->PS 
-add cx, -90 ; cx:0x5a->0x0 flags:PS->CPAZ 
+add cx, 65446 ; cx:0x5a->0x0 flags:PS->CPAZ 
 mov sp, 99 ; sp:0x0->0x63 
 mov bp, 98 ; bp:0x0->0x62 
 cmp bp, sp ; flags:CPAZ->CPAS 

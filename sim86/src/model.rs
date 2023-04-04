@@ -300,6 +300,10 @@ pub enum ByteOrWord {
 
 #[derive(Debug, Clone)]
 pub enum Instruction {
+    // TODO(photobaric): This type signature currently allows encoding mismatching reg and rm fields
+    //  (e.g. 8-bit register and 16-bit rm). When we pattern match we get a bunch of unreachable branches.
+    //  We can do better with a tigher encoding by bundling them together like `RegRm8 | RegRm16`
+    //  instead of allowing each operand to vary their size independently.
     MovRmToFromReg {
         is_reg_dst: bool,
         reg: RegOperand,
@@ -409,12 +413,12 @@ pub enum Instruction {
     Neg {
         rm: RegMemOperand,
     },
-    CmpRmWithReg {
+    CmpRmToReg {
         is_reg_dst: bool,
         reg: RegOperand,
         rm: RegMemOperand,
     },
-    CmpImmediateWithRm {
+    CmpImmediateToRm {
         rm: RegMemOperand,
         immediate: ByteOrWord,
     },
@@ -915,7 +919,7 @@ impl ::std::fmt::Display for PrefixedInstruction {
             }
             Instruction::Dec { rm } => display_unary_rm!("dec", rm),
             Instruction::Neg { rm } => display_unary_rm!("neg", rm),
-            Instruction::CmpRmWithReg {
+            Instruction::CmpRmToReg {
                 is_reg_dst,
                 reg,
                 rm,
@@ -926,7 +930,7 @@ impl ::std::fmt::Display for PrefixedInstruction {
                     write!(f, "cmp {}, {}", rm!(rm), reg)
                 }
             }
-            Instruction::CmpImmediateWithRm { rm, immediate } => {
+            Instruction::CmpImmediateToRm { rm, immediate } => {
                 display_immediate_to_rm!("cmp", rm, immediate)
             }
             Instruction::Aas => write!(f, "aas"),
