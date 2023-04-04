@@ -29,8 +29,6 @@ macro_rules! rw_flag {
     };
 }
 
-// This needs to be macro because a, b, r can be arbitrary integer types
-// and we don't have a trait that unifies across them (we may consider something like funty).
 macro_rules! compute_af {
     ($a:ident, $b:ident, $r:ident) => {
         // AF is basically the CF but looking at the 4th bit instead of the 8th bit.
@@ -135,35 +133,22 @@ impl MachineState {
                     ) {
                         match (dst_reg, src_reg) {
                             (RegOperand::Reg8(dst_reg), RegOperand::Reg8(src_reg)) => {
-                                let dst_value = state.read_byte_reg(dst_reg);
-                                let src_value = state.read_byte_reg(src_reg);
+                                let a = state.read_byte_reg(dst_reg);
+                                let b = state.read_byte_reg(src_reg);
 
-                                let (result, cf) = u8::overflowing_add(dst_value, src_value);
-                                let (_, of) = i8::overflowing_add(dst_value as i8, src_value as i8);
-                                state.write_byte_reg(dst_reg, result);
-                                state.write_cf(cf);
-                                state.write_of(of);
-                                state.write_sf((result as i8) < 0);
-                                state.write_pf((result as u8).count_ones() % 2 == 0);
-                                state.write_zf(result == 0);
-
-                                state.write_af(compute_af!(dst_value, src_value, result));
+                                let (r, cf) = u8::overflowing_add(a, b);
+                                let (_, of) = i8::overflowing_add(a as i8, b as i8);
+                                state.write_byte_reg(dst_reg, r);
+                                state.write_flags_u8(a, b, r, cf, of);
                             }
                             (RegOperand::Reg16(dst_reg), RegOperand::Reg16(src_reg)) => {
-                                let dst_value = state.read_word_reg(dst_reg);
-                                let src_value = state.read_word_reg(src_reg);
+                                let a = state.read_word_reg(dst_reg);
+                                let b = state.read_word_reg(src_reg);
 
-                                let (result, cf) = u16::overflowing_add(dst_value, src_value);
-                                let (_, of) =
-                                    i16::overflowing_add(dst_value as i16, src_value as i16);
-                                state.write_word_reg(dst_reg, result);
-                                state.write_cf(cf);
-                                state.write_of(of);
-                                state.write_sf((result as i16) < 0);
-                                state.write_pf((result as u8).count_ones() % 2 == 0);
-                                state.write_zf(result == 0);
-
-                                state.write_af(compute_af!(dst_value, src_value, result));
+                                let (r, cf) = u16::overflowing_add(a, b);
+                                let (_, of) = i16::overflowing_add(a as i16, b as i16);
+                                state.write_word_reg(dst_reg, r);
+                                state.write_flags_u16(a, b, r, cf, of);
                             }
 
                             (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
@@ -186,13 +171,7 @@ impl MachineState {
                         let (r, cf) = u8::overflowing_add(a, b);
                         let (_, of) = i8::overflowing_add(a as i8, b as i8);
                         self.write_byte_reg(reg, r);
-                        self.write_cf(cf);
-                        self.write_of(of);
-                        self.write_sf((r as i8) < 0);
-                        self.write_pf((r as u8).count_ones() % 2 == 0);
-                        self.write_zf(r == 0);
-
-                        self.write_af(compute_af!(a, b, r));
+                        self.write_flags_u8(a, b, r, cf, of);
                     }
                     (RegOperand::Reg16(reg), ByteOrWord::Word(b)) => {
                         let a = self.read_word_reg(reg);
@@ -200,13 +179,7 @@ impl MachineState {
                         let (r, cf) = u16::overflowing_add(a, b);
                         let (_, of) = i16::overflowing_add(a as i16, b as i16);
                         self.write_word_reg(reg, r);
-                        self.write_cf(cf);
-                        self.write_of(of);
-                        self.write_sf((r as i16) < 0);
-                        self.write_pf((r as u8).count_ones() % 2 == 0);
-                        self.write_zf(r == 0);
-
-                        self.write_af(compute_af!(a, b, r));
+                        self.write_flags_u16(a, b, r, cf, of);
                     }
 
                     (RegOperand::Reg8(_), ByteOrWord::Word(_)) => unreachable!(),
@@ -228,35 +201,22 @@ impl MachineState {
                     ) {
                         match (dst_reg, src_reg) {
                             (RegOperand::Reg8(dst_reg), RegOperand::Reg8(src_reg)) => {
-                                let dst_value = state.read_byte_reg(dst_reg);
-                                let src_value = state.read_byte_reg(src_reg);
+                                let a = state.read_byte_reg(dst_reg);
+                                let b = state.read_byte_reg(src_reg);
 
-                                let (result, cf) = u8::overflowing_sub(dst_value, src_value);
-                                let (_, of) = i8::overflowing_sub(dst_value as i8, src_value as i8);
-                                state.write_byte_reg(dst_reg, result);
-                                state.write_cf(cf);
-                                state.write_of(of);
-                                state.write_sf((result as i8) < 0);
-                                state.write_pf((result as u8).count_ones() % 2 == 0);
-                                state.write_zf(result == 0);
-
-                                state.write_af(compute_af!(dst_value, src_value, result));
+                                let (r, cf) = u8::overflowing_sub(a, b);
+                                let (_, of) = i8::overflowing_sub(a as i8, b as i8);
+                                state.write_byte_reg(dst_reg, r);
+                                state.write_flags_u8(a, b, r, cf, of);
                             }
                             (RegOperand::Reg16(dst_reg), RegOperand::Reg16(src_reg)) => {
-                                let dst_value = state.read_word_reg(dst_reg);
-                                let src_value = state.read_word_reg(src_reg);
+                                let a = state.read_word_reg(dst_reg);
+                                let b = state.read_word_reg(src_reg);
 
-                                let (result, cf) = u16::overflowing_sub(dst_value, src_value);
-                                let (_, of) =
-                                    i16::overflowing_sub(dst_value as i16, src_value as i16);
-                                state.write_word_reg(dst_reg, result);
-                                state.write_cf(cf);
-                                state.write_of(of);
-                                state.write_sf((result as i16) < 0);
-                                state.write_pf((result as u8).count_ones() % 2 == 0);
-                                state.write_zf(result == 0);
-
-                                state.write_af(compute_af!(dst_value, src_value, result));
+                                let (r, cf) = u16::overflowing_sub(a, b);
+                                let (_, of) = i16::overflowing_sub(a as i16, b as i16);
+                                state.write_word_reg(dst_reg, r);
+                                state.write_flags_u16(a, b, r, cf, of);
                             }
 
                             (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
@@ -279,13 +239,7 @@ impl MachineState {
                         let (r, cf) = u8::overflowing_sub(a, b);
                         let (_, of) = i8::overflowing_sub(a as i8, b as i8);
                         self.write_byte_reg(reg, r);
-                        self.write_cf(cf);
-                        self.write_of(of);
-                        self.write_sf((r as i8) < 0);
-                        self.write_pf((r as u8).count_ones() % 2 == 0);
-                        self.write_zf(r == 0);
-
-                        self.write_af(compute_af!(a, b, r));
+                        self.write_flags_u8(a, b, r, cf, of);
                     }
                     (RegOperand::Reg16(reg), ByteOrWord::Word(b)) => {
                         let a = self.read_word_reg(reg);
@@ -293,13 +247,7 @@ impl MachineState {
                         let (r, cf) = u16::overflowing_sub(a, b);
                         let (_, of) = i16::overflowing_sub(a as i16, b as i16);
                         self.write_word_reg(reg, r);
-                        self.write_cf(cf);
-                        self.write_of(of);
-                        self.write_sf((r as i16) < 0);
-                        self.write_pf((r as u8).count_ones() % 2 == 0);
-                        self.write_zf(r == 0);
-
-                        self.write_af(compute_af!(a, b, r));
+                        self.write_flags_u16(a, b, r, cf, of);
                     }
 
                     (RegOperand::Reg8(_), ByteOrWord::Word(_)) => unreachable!(),
@@ -321,33 +269,20 @@ impl MachineState {
                     ) {
                         match (dst_reg, src_reg) {
                             (RegOperand::Reg8(dst_reg), RegOperand::Reg8(src_reg)) => {
-                                let dst_value = state.read_byte_reg(dst_reg);
-                                let src_value = state.read_byte_reg(src_reg);
+                                let a = state.read_byte_reg(dst_reg);
+                                let b = state.read_byte_reg(src_reg);
 
-                                let (result, cf) = u8::overflowing_sub(dst_value, src_value);
-                                let (_, of) = i8::overflowing_sub(dst_value as i8, src_value as i8);
-                                state.write_cf(cf);
-                                state.write_of(of);
-                                state.write_sf((result as i8) < 0);
-                                state.write_pf((result as u8).count_ones() % 2 == 0);
-                                state.write_zf(result == 0);
-
-                                state.write_af(compute_af!(dst_value, src_value, result));
+                                let (r, cf) = u8::overflowing_sub(a, b);
+                                let (_, of) = i8::overflowing_sub(a as i8, b as i8);
+                                state.write_flags_u8(a, b, r, cf, of);
                             }
                             (RegOperand::Reg16(dst_reg), RegOperand::Reg16(src_reg)) => {
-                                let dst_value = state.read_word_reg(dst_reg);
-                                let src_value = state.read_word_reg(src_reg);
+                                let a = state.read_word_reg(dst_reg);
+                                let b = state.read_word_reg(src_reg);
 
-                                let (result, cf) = u16::overflowing_sub(dst_value, src_value);
-                                let (_, of) =
-                                    i16::overflowing_sub(dst_value as i16, src_value as i16);
-                                state.write_cf(cf);
-                                state.write_of(of);
-                                state.write_sf((result as i16) < 0);
-                                state.write_pf((result as u8).count_ones() % 2 == 0);
-                                state.write_zf(result == 0);
-
-                                state.write_af(compute_af!(dst_value, src_value, result));
+                                let (r, cf) = u16::overflowing_sub(a, b);
+                                let (_, of) = i16::overflowing_sub(a as i16, b as i16);
+                                state.write_flags_u16(a, b, r, cf, of);
                             }
 
                             (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
@@ -620,6 +555,24 @@ impl MachineState {
     rw_flag!(read_if, write_if, 9);
     rw_flag!(read_df, write_df, 10);
     rw_flag!(read_of, write_of, 11);
+
+    fn write_flags_u8(self: &mut MachineState, a: u8, b: u8, r: u8, cf: bool, of: bool) {
+        self.write_cf(cf);
+        self.write_of(of);
+        self.write_sf((r as i8) < 0);
+        self.write_pf((r as u8).count_ones() % 2 == 0); // Note that PF only examines the lower 8 bits (Page 2-35)
+        self.write_zf(r == 0);
+        self.write_af(compute_af!(a, b, r));
+    }
+
+    fn write_flags_u16(self: &mut MachineState, a: u16, b: u16, r: u16, cf: bool, of: bool) {
+        self.write_cf(cf);
+        self.write_of(of);
+        self.write_sf((r as i16) < 0);
+        self.write_pf((r as u8).count_ones() % 2 == 0); // Note that PF only examines the lower 8 bits (Page 2-35)
+        self.write_zf(r == 0);
+        self.write_af(compute_af!(a, b, r));
+    }
 
     pub fn read_ip(&self) -> u16 {
         self.ip_reg
