@@ -174,9 +174,11 @@ fn test_execution(binary: &[u8], expected_trace: &str, header: &str, print_regis
 
     writeln!(write).unwrap();
     writeln!(write, "Final registers:").unwrap();
-    final_machine_state
-        .print_registers("      ", print_registers, &mut write)
-        .unwrap();
+    for reg in print_registers {
+        final_machine_state
+            .print_register(*reg, &mut write)
+            .unwrap();
+    }
 
     let output_vec: Vec<u8> = write.into_inner();
     let output_trace: String = String::from_utf8(output_vec).unwrap();

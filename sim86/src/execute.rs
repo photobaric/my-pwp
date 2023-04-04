@@ -454,7 +454,7 @@ impl MachineState {
     rw_flag!(read_of, write_of, 11);
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Reg {
     Reg8(ByteReg),
     Reg16(WordReg),
@@ -463,42 +463,23 @@ pub enum Reg {
 }
 
 impl MachineState {
-    pub fn print_registers<W: Write>(
-        &self,
-        prefix: &str,
-        registers: &[Reg],
-        output: &mut W,
-    ) -> Result<(), anyhow::Error> {
-        for reg in registers {
-            match reg {
-                Reg::Reg8(byte_reg) => {
-                    let value = self.read_byte_reg(*byte_reg);
-                    writeln!(
-                        output,
-                        "{} {}: {:#06x} ({})",
-                        prefix, byte_reg, value, value
-                    )?;
-                }
-                Reg::Reg16(word_reg) => {
-                    let value = self.gprs[*word_reg as usize];
-                    writeln!(
-                        output,
-                        "{} {}: {:#06x} ({})",
-                        prefix, word_reg, value, value
-                    )?;
-                }
-                Reg::SegmentReg(segment_reg) => {
-                    let value = self.srs[*segment_reg as usize];
-                    writeln!(
-                        output,
-                        "{} {}: {:#06x} ({})",
-                        prefix, segment_reg, value, value
-                    )?;
-                }
-                Reg::FlagsReg => {
-                    let value = self.flags_reg;
-                    writeln!(output, "{} flags: {}", prefix, Flags(value),)?;
-                }
+    pub fn print_register<W: Write>(&self, reg: Reg, output: &mut W) -> Result<(), anyhow::Error> {
+        match reg {
+            Reg::Reg8(byte_reg) => {
+                let value = self.read_byte_reg(byte_reg);
+                writeln!(output, "{}: {:#06x} ({})", byte_reg, value, value)?;
+            }
+            Reg::Reg16(word_reg) => {
+                let value = self.gprs[word_reg as usize];
+                writeln!(output, "{}: {:#06x} ({})", word_reg, value, value)?;
+            }
+            Reg::SegmentReg(segment_reg) => {
+                let value = self.srs[segment_reg as usize];
+                writeln!(output, "{}: {:#06x} ({})", segment_reg, value, value)?;
+            }
+            Reg::FlagsReg => {
+                let value = self.flags_reg;
+                writeln!(output, "flags: {}", Flags(value),)?;
             }
         }
         Ok(())
