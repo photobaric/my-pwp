@@ -573,7 +573,7 @@ pub enum Instruction {
     JleJng {
         ip_inc8: i8,
     },
-    JbJnae {
+    JbJnaeJc {
         ip_inc8: i8,
     },
     JbeJna {
@@ -602,7 +602,7 @@ pub enum Instruction {
     JnleJg {
         ip_inc8: i8,
     },
-    JnbJae {
+    JnbJaeJnc {
         ip_inc8: i8,
     },
     JnbeJa {
@@ -1048,14 +1048,14 @@ impl ::std::fmt::Display for PrefixedInstruction {
             Instruction::JeJz { ip_inc8 } => display_jump!("jz", ip_inc8, 2),
             Instruction::JlJnge { ip_inc8 } => display_jump!("jl", ip_inc8, 2),
             Instruction::JleJng { ip_inc8 } => display_jump!("jle", ip_inc8, 2),
-            Instruction::JbJnae { ip_inc8 } => display_jump!("jb", ip_inc8, 2),
+            Instruction::JbJnaeJc { ip_inc8 } => display_jump!("jb", ip_inc8, 2),
             Instruction::JbeJna { ip_inc8 } => display_jump!("jbe", ip_inc8, 2),
             Instruction::JpJpe { ip_inc8 } => display_jump!("jp", ip_inc8, 2),
             Instruction::Jo { ip_inc8 } => display_jump!("jo", ip_inc8, 2),
             Instruction::Js { ip_inc8 } => display_jump!("js", ip_inc8, 2),
             Instruction::JnlJge { ip_inc8 } => display_jump!("jge", ip_inc8, 2),
             Instruction::JnleJg { ip_inc8 } => display_jump!("jg", ip_inc8, 2),
-            Instruction::JnbJae { ip_inc8 } => display_jump!("jae", ip_inc8, 2),
+            Instruction::JnbJaeJnc { ip_inc8 } => display_jump!("jae", ip_inc8, 2),
             Instruction::JnbeJa { ip_inc8 } => display_jump!("ja", ip_inc8, 2),
             Instruction::JnpJpo { ip_inc8 } => display_jump!("jpo", ip_inc8, 2),
             Instruction::Jno { ip_inc8 } => display_jump!("jno", ip_inc8, 2),

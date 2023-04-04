@@ -769,14 +769,14 @@ fn parse_0b01110001_jno<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     Instruction::Jno { ip_inc8 }
 }
 
-fn parse_0b01110010_jb_jnae<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+fn parse_0b01110010_jb_jnae_jc<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let ip_inc8: i8 = next_byte_or_panic(input) as i8;
-    Instruction::JbJnae { ip_inc8 }
+    Instruction::JbJnaeJc { ip_inc8 }
 }
 
-fn parse_0b01110011_jnb_jae<R: Read>(_b1: u8, input: &mut R) -> Instruction {
+fn parse_0b01110011_jnb_jae_jnc<R: Read>(_b1: u8, input: &mut R) -> Instruction {
     let ip_inc8: i8 = next_byte_or_panic(input) as i8;
-    Instruction::JnbJae { ip_inc8 }
+    Instruction::JnbJaeJnc { ip_inc8 }
 }
 
 fn parse_0b01110100_je_jz<R: Read>(_b1: u8, input: &mut R) -> Instruction {
@@ -1212,8 +1212,8 @@ generate_jump_tables! {
     0b01101111 => fail_unused,
     0b01110000 => parse_0b01110000_jo,
     0b01110001 => parse_0b01110001_jno,
-    0b01110010 => parse_0b01110010_jb_jnae,
-    0b01110011 => parse_0b01110011_jnb_jae,
+    0b01110010 => parse_0b01110010_jb_jnae_jc,
+    0b01110011 => parse_0b01110011_jnb_jae_jnc,
     0b01110100 => parse_0b01110100_je_jz,
     0b01110101 => parse_0b01110101_jne_jnz,
     0b01110110 => parse_0b01110110_jbe_jna,

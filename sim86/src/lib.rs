@@ -37,6 +37,7 @@ pub fn disassemble_via_jump_table<R: Read, W: Write>(mut input: R, output: &mut 
 pub fn execute_with_trace<W: Write>(
     mut input: Cursor<&[u8]>,
     output: &mut W,
+    include_ip_diff: bool,
 ) -> execute::MachineState {
     let mut machine_state = execute::MachineState::default();
     loop {
@@ -57,9 +58,14 @@ pub fn execute_with_trace<W: Write>(
         machine_state.write_ip(input.position().try_into().unwrap());
         machine_state.execute_instruction(instruction);
 
-        execute::MachineStateDiff::diff(&prev_machine_state, &machine_state, |diff| {
-            write!(output, " {}", diff).unwrap();
-        });
+        execute::MachineStateDiff::diff(
+            include_ip_diff,
+            &prev_machine_state,
+            &machine_state,
+            |diff| {
+                write!(output, " {}", diff).unwrap();
+            },
+        );
 
         writeln!(output).unwrap();
     }

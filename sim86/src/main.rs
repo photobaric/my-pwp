@@ -35,7 +35,7 @@ fn main() {
             let input: Cursor<&[u8]> = Cursor::new(buffer);
 
             writeln!(stdout, "trace:").unwrap();
-            let final_machine_state = execute_with_trace(input, &mut stdout);
+            let final_machine_state = execute_with_trace(input, &mut stdout, true);
             writeln!(stdout).unwrap();
             writeln!(stdout, "final register state:").unwrap();
             final_machine_state

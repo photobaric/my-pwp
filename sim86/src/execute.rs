@@ -397,6 +397,171 @@ impl MachineState {
                 RegMemOperand::Mem(_) => todo!(),
             },
 
+            // See Table 2-15 on Page 2-46
+            Instruction::JeJz { ip_inc8 } => {
+                let zf = MachineState::read_zf(self.flags_reg);
+                let condition = zf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::JlJnge { ip_inc8 } => {
+                let sf = MachineState::read_sf(self.flags_reg);
+                let of = MachineState::read_of(self.flags_reg);
+                let condition = sf ^ of;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::JleJng { ip_inc8 } => {
+                let sf = MachineState::read_sf(self.flags_reg);
+                let of = MachineState::read_of(self.flags_reg);
+                let zf = MachineState::read_zf(self.flags_reg);
+                let condition = (sf ^ of) || zf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            // Note that Table 2-15 lists JC separately for some reason
+            Instruction::JbJnaeJc { ip_inc8 } => {
+                let cf = MachineState::read_cf(self.flags_reg);
+                let condition = cf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::JbeJna { ip_inc8 } => {
+                let cf = MachineState::read_cf(self.flags_reg);
+                let zf = MachineState::read_zf(self.flags_reg);
+                let condition = cf || zf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::JpJpe { ip_inc8 } => {
+                let pf = MachineState::read_pf(self.flags_reg);
+                let condition = pf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::Jo { ip_inc8 } => {
+                let of = MachineState::read_of(self.flags_reg);
+                let condition = of;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::Js { ip_inc8 } => {
+                let sf = MachineState::read_sf(self.flags_reg);
+                let condition = sf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::JneJnz { ip_inc8 } => {
+                let zf = MachineState::read_zf(self.flags_reg);
+                let condition = !zf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::JnlJge { ip_inc8 } => {
+                let sf = MachineState::read_sf(self.flags_reg);
+                let of = MachineState::read_of(self.flags_reg);
+                let condition = !(sf ^ of);
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::JnleJg { ip_inc8 } => {
+                let sf = MachineState::read_sf(self.flags_reg);
+                let of = MachineState::read_of(self.flags_reg);
+                let zf = MachineState::read_zf(self.flags_reg);
+                let condition = !((sf ^ of) || zf);
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            // Note that Table 2-15 lists JNC separately for some reason
+            Instruction::JnbJaeJnc { ip_inc8 } => {
+                let cf = MachineState::read_cf(self.flags_reg);
+                let condition = !cf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::JnbeJa { ip_inc8 } => {
+                let cf = MachineState::read_cf(self.flags_reg);
+                let zf = MachineState::read_zf(self.flags_reg);
+                let condition = !(cf || zf);
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::JnpJpo { ip_inc8 } => {
+                let pf = MachineState::read_pf(self.flags_reg);
+                let condition = !pf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::Jno { ip_inc8 } => {
+                let of = MachineState::read_of(self.flags_reg);
+                let condition = !of;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::Jns { ip_inc8 } => {
+                let sf = MachineState::read_sf(self.flags_reg);
+                let condition = !sf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+
+            Instruction::Loop { ip_inc8 } => {
+                let cx = self.read_word_reg(WordReg::CX);
+                let cx = cx.wrapping_sub(1);
+                self.write_word_reg(WordReg::CX, cx);
+                let condition = cx != 0;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::LoopeLoopz { ip_inc8 } => {
+                let cx = self.read_word_reg(WordReg::CX);
+                let cx = cx.wrapping_sub(1);
+                self.write_word_reg(WordReg::CX, cx);
+
+                let zf = MachineState::read_zf(self.flags_reg);
+
+                let condition = cx != 0 && zf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::LoopneLoopnz { ip_inc8 } => {
+                let cx = self.read_word_reg(WordReg::CX);
+                let cx = cx.wrapping_sub(1);
+                self.write_word_reg(WordReg::CX, cx);
+
+                let zf = MachineState::read_zf(self.flags_reg);
+
+                let condition = cx != 0 && !zf;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+            Instruction::Jcxz { ip_inc8 } => {
+                let cx = self.read_word_reg(WordReg::CX);
+                let condition = cx == 0;
+                if condition {
+                    self.ip_inc8(ip_inc8);
+                }
+            }
+
             _ => todo!(),
         }
     }
@@ -462,6 +627,11 @@ impl MachineState {
 
     pub fn write_ip(&mut self, ip: u16) {
         self.ip_reg = ip;
+    }
+
+    pub fn ip_inc8(&mut self, ip_inc8: i8) {
+        let ip_inc: i16 = ip_inc8.into();
+        self.ip_reg = self.ip_reg.wrapping_add_signed(ip_inc);
     }
 }
 
@@ -581,6 +751,7 @@ impl ::std::fmt::Display for Flags {
 
 impl MachineStateDiff {
     pub fn diff<F: FnMut(MachineStateDiff) -> ()>(
+        include_ip_diff: bool,
         prev_state: &MachineState,
         next_state: &MachineState,
         mut process_diff: F,
@@ -603,7 +774,7 @@ impl MachineStateDiff {
                 process_diff(diff);
             }
         }
-        {
+        if include_ip_diff {
             let prev_ip = prev_state.ip_reg;
             let next_ip = next_state.ip_reg;
             if prev_ip != next_ip {

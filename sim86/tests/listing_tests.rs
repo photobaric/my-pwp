@@ -165,13 +165,19 @@ fn test_reassembly(binary: &[u8], _expected_asm: &str) {
     }
 }
 
-fn test_execution(binary: &[u8], expected_trace: &str, header: &str, print_registers: &[Reg]) {
+fn test_execution(
+    binary: &[u8],
+    expected_trace: &str,
+    header: &str,
+    print_registers: &[Reg],
+    include_ip_diff: bool,
+) {
     let read: Cursor<&[u8]> = Cursor::new(binary);
     let mut write: Cursor<Vec<u8>> = Cursor::new(Vec::new());
 
     writeln!(write, "{}", header).unwrap();
 
-    let final_machine_state = execute_with_trace(read, &mut write);
+    let final_machine_state = execute_with_trace(read, &mut write, include_ip_diff);
 
     writeln!(write).unwrap();
     writeln!(write, "Final registers:").unwrap();
@@ -269,6 +275,7 @@ fn listing_0043_immediate_movs() {
         TRACE,
         r"--- test\listing_0043_immediate_movs execution ---",
         &[AX, BX, CX, DX, SP, BP, SI, DI],
+        false,
     );
 }
 
@@ -284,6 +291,7 @@ fn listing_0044_register_movs() {
         TRACE,
         r"--- test\listing_0044_register_movs execution ---",
         &[AX, BX, CX, DX, SP, BP, SI, DI],
+        false,
     );
 }
 
@@ -299,6 +307,7 @@ fn listing_0045_challenge_register_movs() {
         TRACE,
         r"--- test\listing_0045_challenge_register_movs execution ---",
         &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+        false,
     );
 }
 
@@ -314,6 +323,7 @@ fn listing_0046_add_sub_cmp() {
         TRACE,
         r"--- test\listing_0046_add_sub_cmp execution ---",
         &[BX, CX, SP, FLAGS],
+        false,
     );
 }
 
@@ -329,6 +339,7 @@ fn listing_0047_challenge_flags() {
         TRACE,
         r"--- test\listing_0047_challenge_flags execution ---",
         &[BX, DX, SP, BP, FLAGS],
+        false,
     );
 }
 
@@ -344,6 +355,7 @@ fn listing_0048_ip_register() {
         TRACE,
         r"--- test\listing_0048_ip_register execution ---",
         &[BX, CX, IP, FLAGS],
+        true,
     );
 }
 
@@ -358,7 +370,8 @@ fn listing_0049_conditional_jumps() {
         BINARY,
         TRACE,
         r"--- test\listing_0049_conditional_jumps execution ---",
-        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+        &[BX, IP, FLAGS],
+        true,
     );
 }
 
@@ -373,7 +386,8 @@ fn listing_0050_challenge_jumps() {
         BINARY,
         TRACE,
         r"--- test\listing_0050_challenge_jumps execution ---",
-        &[AX, BX, CX, DX, SP, BP, SI, DI, ES, SS, DS],
+        &[AX, BX, IP, FLAGS],
+        true,
     );
 }
 
