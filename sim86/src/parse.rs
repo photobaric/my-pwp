@@ -1,3 +1,5 @@
+#![allow(clippy::unusual_byte_groupings)]
+
 use std::{
     io::{ErrorKind, Read},
     slice,

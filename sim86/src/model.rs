@@ -1,3 +1,5 @@
+#![allow(clippy::unusual_byte_groupings)]
+
 use anyhow::ensure;
 
 // Page 4-20, Table 4-9
@@ -715,80 +717,101 @@ impl ::std::fmt::Display for PrefixedInstruction {
             None => {}
         }
         let segment_override = prefix_state.get_segment_override();
-        macro_rules! rm {
-            ($rm:ident) => {
-                PrefixedRegMemOperand(*$rm, segment_override)
-            };
-        }
-        macro_rules! mem {
-            ($mem:ident) => {
-                PrefixedMemAddressingMode(*$mem, segment_override)
-            };
-        }
-        macro_rules! display_immediate_to_rm {
-            ($name:literal, $rm:ident, $immediate:ident) => {{
-                match ($rm, $immediate) {
+
+        // just some sugar to denoise the usage sites
+        let prm = |rm: &RegMemOperand| PrefixedRegMemOperand(*rm, segment_override);
+        let pmem = |mem: &MemAddressingMode| PrefixedMemAddressingMode(*mem, segment_override);
+
+        let display_immediate_to_rm =
+            |f: &mut std::fmt::Formatter<'_>,
+             name: &str,
+             rm: &RegMemOperand,
+             immediate: &ByteOrWord| {
+                match (rm, immediate) {
                     // in case of a reg destination, the size of the immediate is already clear from the size of the reg
                     (RegMemOperand::Reg(RegOperand::Reg8(reg)), ByteOrWord::Byte(immediate)) => {
-                        write!(f, "{} {}, {}", $name, reg, immediate)
+                        write!(f, "{} {}, {}", name, reg, immediate)
                     }
                     (RegMemOperand::Reg(RegOperand::Reg16(reg)), ByteOrWord::Word(immediate)) => {
-                        write!(f, "{} {}, {}", $name, reg, immediate)
+                        write!(f, "{} {}, {}", name, reg, immediate)
                     }
 
                     (RegMemOperand::Mem(MemOperand::Mem8(mem)), ByteOrWord::Byte(immediate)) => {
-                        write!(f, "{} {}, byte {}", $name, mem!(mem), immediate)
+                        write!(f, "{} {}, byte {}", name, pmem(mem), immediate)
                     }
                     (RegMemOperand::Mem(MemOperand::Mem16(mem)), ByteOrWord::Word(immediate)) => {
-                        write!(f, "{} {}, word {}", $name, mem!(mem), immediate)
+                        write!(f, "{} {}, word {}", name, pmem(mem), immediate)
                     }
 
-                    (RegMemOperand::Reg(RegOperand::Reg8(_)), ByteOrWord::Word(_)) => unreachable!(),
-                    (RegMemOperand::Reg(RegOperand::Reg16(_)), ByteOrWord::Byte(_)) => unreachable!(),
-                    (RegMemOperand::Mem(MemOperand::Mem8(_)), ByteOrWord::Word(_)) => unreachable!(),
-                    (RegMemOperand::Mem(MemOperand::Mem16(_)), ByteOrWord::Byte(_)) => unreachable!(),
+                    (RegMemOperand::Reg(RegOperand::Reg8(_)), ByteOrWord::Word(_)) => {
+                        unreachable!()
+                    }
+                    (RegMemOperand::Reg(RegOperand::Reg16(_)), ByteOrWord::Byte(_)) => {
+                        unreachable!()
+                    }
+                    (RegMemOperand::Mem(MemOperand::Mem8(_)), ByteOrWord::Word(_)) => {
+                        unreachable!()
+                    }
+                    (RegMemOperand::Mem(MemOperand::Mem16(_)), ByteOrWord::Byte(_)) => {
+                        unreachable!()
+                    }
                 }
-            }};
-        }
-        macro_rules! display_unary_rm {
-            ($name:literal, $rm:ident) => {{
-                // in case of a reg destination, the size of the immediate is already clear from the size of the reg
-                match $rm {
-                    RegMemOperand::Reg(reg) => write!(f, "{} {}", $name, reg),
-                    RegMemOperand::Mem(MemOperand::Mem8(mem)) => write!(f, "{} byte {}", $name, mem!(mem)),
-                    RegMemOperand::Mem(MemOperand::Mem16(mem)) => write!(f, "{} word {}", $name, mem!(mem)),
+            };
+
+        let display_unary_rm =
+            |f: &mut std::fmt::Formatter<'_>, name: &str, rm: &RegMemOperand| match rm {
+                RegMemOperand::Reg(reg) => write!(f, "{} {}", name, reg),
+                RegMemOperand::Mem(MemOperand::Mem8(mem)) => {
+                    write!(f, "{} byte {}", name, pmem(mem))
                 }
-            }};
-        }
-        macro_rules! display_shift {
-            ($name:literal, $count:ident, $rm:ident) => {{
-                let count = if *$count { "cl" } else { "1" };
-                match $rm {
-                    RegMemOperand::Reg(reg) => write!(f, "{} {}, {}", $name, reg, count),
+                RegMemOperand::Mem(MemOperand::Mem16(mem)) => {
+                    write!(f, "{} word {}", name, pmem(mem))
+                }
+            };
+
+        let display_shift =
+            |f: &mut std::fmt::Formatter<'_>, name: &str, count: &bool, rm: &RegMemOperand| {
+                let count = if *count { "cl" } else { "1" };
+                match rm {
+                    RegMemOperand::Reg(reg) => write!(f, "{} {}, {}", name, reg, count),
                     RegMemOperand::Mem(MemOperand::Mem8(mem)) => {
-                        write!(f, "{} byte {}, {}", $name, mem!(mem), count)
+                        write!(f, "{} byte {}, {}", name, pmem(mem), count)
                     }
                     RegMemOperand::Mem(MemOperand::Mem16(mem)) => {
-                        write!(f, "{} word {}, {}", $name, mem!(mem), count)
+                        write!(f, "{} word {}, {}", name, pmem(mem), count)
                     }
                 }
-            }};
-        }
-        macro_rules! display_jump {
-            ($name:expr, $ip_inc8:ident, $size:literal) => {{
+            };
+
+        let display_jump =
+            |f: &mut std::fmt::Formatter<'_>, name: &str, ip_inc8: &i8, size: i16| {
                 // nasm wants the displacment to be from the beginning of the instruction
                 // but in the machine code it's encoded from the end.
                 // https://www.nasm.us/doc/nasmdoc3.html#section-3.5
                 //
                 // widen to i32 to fit `+ SIZE` and to fit the negated negative min
-                let ip_inc8 = (*$ip_inc8 as i32) + $size;
+                let ip_inc8 = (*ip_inc8 as i16) + size;
                 if ip_inc8 < 0 {
-                    write!(f, "{} $-{}", $name, -ip_inc8)
+                    write!(f, "{} $-{}", name, -ip_inc8)
                 } else {
-                    write!(f, "{} $+{}", $name, ip_inc8)
+                    write!(f, "{} $+{}", name, ip_inc8)
                 }
-            }};
-        }
+            };
+        let display_jump_16 =
+            |f: &mut std::fmt::Formatter<'_>, name: &str, ip_inc16: &i16, size: i32| {
+                // nasm wants the displacment to be from the beginning of the instruction
+                // but in the machine code it's encoded from the end.
+                // https://www.nasm.us/doc/nasmdoc3.html#section-3.5
+                //
+                // widen to i32 to fit `+ SIZE` and to fit the negated negative min
+                let ip_inc8 = (*ip_inc16 as i32) + size;
+                if ip_inc8 < 0 {
+                    write!(f, "{} $-{}", name, -ip_inc8)
+                } else {
+                    write!(f, "{} $+{}", name, ip_inc8)
+                }
+            };
+
         match instruction {
             Instruction::MovRmToFromReg {
                 is_reg_dst,
@@ -796,13 +819,13 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 rm,
             } => {
                 if *is_reg_dst {
-                    write!(f, "mov {}, {}", reg, rm!(rm))
+                    write!(f, "mov {}, {}", reg, prm(rm))
                 } else {
-                    write!(f, "mov {}, {}", rm!(rm), reg)
+                    write!(f, "mov {}, {}", prm(rm), reg)
                 }
             }
             Instruction::MovImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("mov", rm, immediate)
+                display_immediate_to_rm(f, "mov", rm, immediate)
             }
             Instruction::MovRmToFromSegmentReg {
                 is_segment_reg_dst,
@@ -810,25 +833,25 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 rm,
             } => {
                 if *is_segment_reg_dst {
-                    write!(f, "mov {}, {}", segment_reg, rm!(rm))
+                    write!(f, "mov {}, {}", segment_reg, prm(rm))
                 } else {
-                    write!(f, "mov {}, {}", rm!(rm), segment_reg)
+                    write!(f, "mov {}, {}", prm(rm), segment_reg)
                 }
             }
-            Instruction::Push { rm } => display_unary_rm!("push", rm),
+            Instruction::Push { rm } => display_unary_rm(f, "push", rm),
             Instruction::PushSegmentReg { segment_reg } => write!(f, "push {}", segment_reg),
-            Instruction::Pop { rm } => display_unary_rm!("pop", rm),
+            Instruction::Pop { rm } => display_unary_rm(f, "pop", rm),
             Instruction::PopSegmentReg { segment_reg } => write!(f, "pop {}", segment_reg),
             Instruction::Xchg { reg, rm } => {
                 // work around nasm bug by making the memory operand the first argument
                 // when there is a lock prefix:
                 // https://bugzilla.nasm.us/show_bug.cgi?id=3392838#c2
                 if prefix_state.get_lock() {
-                    write!(f, "xchg {}, {}", rm!(rm), reg)
+                    write!(f, "xchg {}, {}", prm(rm), reg)
                 } else {
                     // but in order to roundtrip with our test cases, reg should be otherwise be the first argument
                     // since a register-register xchg will encode the first register in reg and the second in rm
-                    write!(f, "xchg {}, {}", reg, rm!(rm))
+                    write!(f, "xchg {}, {}", reg, prm(rm))
                 }
             }
             Instruction::InFixed { is_word, port } => {
@@ -850,9 +873,9 @@ impl ::std::fmt::Display for PrefixedInstruction {
             Instruction::Xlat => {
                 write!(f, "xlat")
             }
-            Instruction::Lea { reg, rm } => write!(f, "lea {}, {}", reg, rm!(rm)),
-            Instruction::Lds { reg, rm } => write!(f, "lds {}, {}", reg, rm!(rm)),
-            Instruction::Les { reg, rm } => write!(f, "les {}, {}", reg, rm!(rm)),
+            Instruction::Lea { reg, rm } => write!(f, "lea {}, {}", reg, prm(rm)),
+            Instruction::Lds { reg, rm } => write!(f, "lds {}, {}", reg, prm(rm)),
+            Instruction::Les { reg, rm } => write!(f, "les {}, {}", reg, prm(rm)),
             Instruction::Lahf => write!(f, "lahf"),
             Instruction::Sahf => write!(f, "sahf"),
             Instruction::Pushf => write!(f, "pushf"),
@@ -864,13 +887,13 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 rm,
             } => {
                 if *is_reg_dst {
-                    write!(f, "add {}, {}", reg, rm!(rm))
+                    write!(f, "add {}, {}", reg, prm(rm))
                 } else {
-                    write!(f, "add {}, {}", rm!(rm), reg)
+                    write!(f, "add {}, {}", prm(rm), reg)
                 }
             }
             Instruction::AddImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("add", rm, immediate)
+                display_immediate_to_rm(f, "add", rm, immediate)
             }
             Instruction::AdcRmToFromReg {
                 is_reg_dst,
@@ -878,15 +901,15 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 rm,
             } => {
                 if *is_reg_dst {
-                    write!(f, "adc {}, {}", reg, rm!(rm))
+                    write!(f, "adc {}, {}", reg, prm(rm))
                 } else {
-                    write!(f, "adc {}, {}", rm!(rm), reg)
+                    write!(f, "adc {}, {}", prm(rm), reg)
                 }
             }
             Instruction::AdcImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("adc", rm, immediate)
+                display_immediate_to_rm(f, "adc", rm, immediate)
             }
-            Instruction::Inc { rm } => display_unary_rm!("inc", rm),
+            Instruction::Inc { rm } => display_unary_rm(f, "inc", rm),
             Instruction::Aaa => write!(f, "aaa"),
             Instruction::Daa => write!(f, "daa"),
             Instruction::SubRmToFromReg {
@@ -895,13 +918,13 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 rm,
             } => {
                 if *is_reg_dst {
-                    write!(f, "sub {}, {}", reg, rm!(rm))
+                    write!(f, "sub {}, {}", reg, prm(rm))
                 } else {
-                    write!(f, "sub {}, {}", rm!(rm), reg)
+                    write!(f, "sub {}, {}", prm(rm), reg)
                 }
             }
             Instruction::SubImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("sub", rm, immediate)
+                display_immediate_to_rm(f, "sub", rm, immediate)
             }
             Instruction::SbbRmToFromReg {
                 is_reg_dst,
@@ -909,71 +932,71 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 rm,
             } => {
                 if *is_reg_dst {
-                    write!(f, "sbb {}, {}", reg, rm!(rm))
+                    write!(f, "sbb {}, {}", reg, prm(rm))
                 } else {
-                    write!(f, "sbb {}, {}", rm!(rm), reg)
+                    write!(f, "sbb {}, {}", prm(rm), reg)
                 }
             }
             Instruction::SbbImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("sbb", rm, immediate)
+                display_immediate_to_rm(f, "sbb", rm, immediate)
             }
-            Instruction::Dec { rm } => display_unary_rm!("dec", rm),
-            Instruction::Neg { rm } => display_unary_rm!("neg", rm),
+            Instruction::Dec { rm } => display_unary_rm(f, "dec", rm),
+            Instruction::Neg { rm } => display_unary_rm(f, "neg", rm),
             Instruction::CmpRmToReg {
                 is_reg_dst,
                 reg,
                 rm,
             } => {
                 if *is_reg_dst {
-                    write!(f, "cmp {}, {}", reg, rm!(rm))
+                    write!(f, "cmp {}, {}", reg, prm(rm))
                 } else {
-                    write!(f, "cmp {}, {}", rm!(rm), reg)
+                    write!(f, "cmp {}, {}", prm(rm), reg)
                 }
             }
             Instruction::CmpImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("cmp", rm, immediate)
+                display_immediate_to_rm(f, "cmp", rm, immediate)
             }
             Instruction::Aas => write!(f, "aas"),
             Instruction::Das => write!(f, "das"),
-            Instruction::Mul { rm } => display_unary_rm!("mul", rm),
-            Instruction::Imul { rm } => display_unary_rm!("imul", rm),
+            Instruction::Mul { rm } => display_unary_rm(f, "mul", rm),
+            Instruction::Imul { rm } => display_unary_rm(f, "imul", rm),
             Instruction::Aam => write!(f, "aam"),
-            Instruction::Div { rm } => display_unary_rm!("div", rm),
-            Instruction::Idiv { rm } => display_unary_rm!("idiv", rm),
+            Instruction::Div { rm } => display_unary_rm(f, "div", rm),
+            Instruction::Idiv { rm } => display_unary_rm(f, "idiv", rm),
             Instruction::Aad => write!(f, "aad"),
             Instruction::Cbw => write!(f, "cbw"),
             Instruction::Cwd => write!(f, "cwd"),
 
-            Instruction::Not { rm } => display_unary_rm!("not", rm),
-            Instruction::ShlSal { count, rm } => display_shift!("shl", count, rm),
-            Instruction::Shr { count, rm } => display_shift!("shr", count, rm),
-            Instruction::Sar { count, rm } => display_shift!("sar", count, rm),
-            Instruction::Rol { count, rm } => display_shift!("rol", count, rm),
-            Instruction::Ror { count, rm } => display_shift!("ror", count, rm),
-            Instruction::Rcl { count, rm } => display_shift!("rcl", count, rm),
-            Instruction::Rcr { count, rm } => display_shift!("rcr", count, rm),
+            Instruction::Not { rm } => display_unary_rm(f, "not", rm),
+            Instruction::ShlSal { count, rm } => display_shift(f, "shl", count, rm),
+            Instruction::Shr { count, rm } => display_shift(f, "shr", count, rm),
+            Instruction::Sar { count, rm } => display_shift(f, "sar", count, rm),
+            Instruction::Rol { count, rm } => display_shift(f, "rol", count, rm),
+            Instruction::Ror { count, rm } => display_shift(f, "ror", count, rm),
+            Instruction::Rcl { count, rm } => display_shift(f, "rcl", count, rm),
+            Instruction::Rcr { count, rm } => display_shift(f, "rcr", count, rm),
             Instruction::AndRmToFromReg {
                 is_reg_dst,
                 reg,
                 rm,
             } => {
                 if *is_reg_dst {
-                    write!(f, "and {}, {}", reg, rm!(rm))
+                    write!(f, "and {}, {}", reg, prm(rm))
                 } else {
-                    write!(f, "and {}, {}", rm!(rm), reg)
+                    write!(f, "and {}, {}", prm(rm), reg)
                 }
             }
             Instruction::AndImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("and", rm, immediate)
+                display_immediate_to_rm(f, "and", rm, immediate)
             }
             Instruction::TestRmWithReg { reg, rm } => {
                 // Seems that for `test` the r/m operand is typically written first:
                 // - Page 4-31
                 // - https://c9x.me/x86/html/file_module_x86_id_315.html
-                write!(f, "test {}, {}", rm!(rm), reg)
+                write!(f, "test {}, {}", prm(rm), reg)
             }
             Instruction::TestImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("test", rm, immediate)
+                display_immediate_to_rm(f, "test", rm, immediate)
             }
             Instruction::OrRmToFromReg {
                 is_reg_dst,
@@ -981,13 +1004,13 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 rm,
             } => {
                 if *is_reg_dst {
-                    write!(f, "or {}, {}", reg, rm!(rm))
+                    write!(f, "or {}, {}", reg, prm(rm))
                 } else {
-                    write!(f, "or {}, {}", rm!(rm), reg)
+                    write!(f, "or {}, {}", prm(rm), reg)
                 }
             }
             Instruction::OrImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("or", rm, immediate)
+                display_immediate_to_rm(f, "or", rm, immediate)
             }
             Instruction::XorRmToFromReg {
                 is_reg_dst,
@@ -995,13 +1018,13 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 rm,
             } => {
                 if *is_reg_dst {
-                    write!(f, "xor {}, {}", reg, rm!(rm))
+                    write!(f, "xor {}, {}", reg, prm(rm))
                 } else {
-                    write!(f, "xor {}, {}", rm!(rm), reg)
+                    write!(f, "xor {}, {}", prm(rm), reg)
                 }
             }
             Instruction::XorImmediateToRm { rm, immediate } => {
-                display_immediate_to_rm!("xor", rm, immediate)
+                display_immediate_to_rm(f, "xor", rm, immediate)
             }
 
             Instruction::Movs { is_word } => {
@@ -1020,15 +1043,15 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 write!(f, "{}", if *is_word { "stosw" } else { "stosb" })
             }
 
-            Instruction::CallDirect { ip_inc16 } => display_jump!("call", ip_inc16, 3),
-            Instruction::CallIndirect { rm } => write!(f, "call {}", rm!(rm)),
+            Instruction::CallDirect { ip_inc16 } => display_jump_16(f, "call", ip_inc16, 3),
+            Instruction::CallIndirect { rm } => write!(f, "call {}", prm(rm)),
             Instruction::CallDirectIntersegment { ip, cs } => write!(f, "call {}:{}", cs, ip),
-            Instruction::CallIndirectIntersegment { rm } => write!(f, "call far {}", rm!(rm)),
-            Instruction::JmpDirectShort { ip_inc8 } => display_jump!("jmp", ip_inc8, 2),
-            Instruction::JmpDirect { ip_inc16 } => display_jump!("jmp", ip_inc16, 3),
-            Instruction::JmpIndirect { rm } => write!(f, "jmp {}", rm!(rm)),
+            Instruction::CallIndirectIntersegment { rm } => write!(f, "call far {}", prm(rm)),
+            Instruction::JmpDirectShort { ip_inc8 } => display_jump(f, "jmp", ip_inc8, 2),
+            Instruction::JmpDirect { ip_inc16 } => display_jump_16(f, "jmp", ip_inc16, 3),
+            Instruction::JmpIndirect { rm } => write!(f, "jmp {}", prm(rm)),
             Instruction::JmpDirectIntersegment { ip, cs } => write!(f, "jmp {}:{}", cs, ip),
-            Instruction::JmpIndirectIntersegment { rm } => write!(f, "jmp far {}", rm!(rm)),
+            Instruction::JmpIndirectIntersegment { rm } => write!(f, "jmp far {}", prm(rm)),
             Instruction::Ret { sp_add } => {
                 if *sp_add == 0 {
                     write!(f, "ret")
@@ -1044,26 +1067,26 @@ impl ::std::fmt::Display for PrefixedInstruction {
                 }
             }
 
-            Instruction::JneJnz { ip_inc8 } => display_jump!("jnz", ip_inc8, 2),
-            Instruction::JeJz { ip_inc8 } => display_jump!("jz", ip_inc8, 2),
-            Instruction::JlJnge { ip_inc8 } => display_jump!("jl", ip_inc8, 2),
-            Instruction::JleJng { ip_inc8 } => display_jump!("jle", ip_inc8, 2),
-            Instruction::JbJnaeJc { ip_inc8 } => display_jump!("jb", ip_inc8, 2),
-            Instruction::JbeJna { ip_inc8 } => display_jump!("jbe", ip_inc8, 2),
-            Instruction::JpJpe { ip_inc8 } => display_jump!("jp", ip_inc8, 2),
-            Instruction::Jo { ip_inc8 } => display_jump!("jo", ip_inc8, 2),
-            Instruction::Js { ip_inc8 } => display_jump!("js", ip_inc8, 2),
-            Instruction::JnlJge { ip_inc8 } => display_jump!("jge", ip_inc8, 2),
-            Instruction::JnleJg { ip_inc8 } => display_jump!("jg", ip_inc8, 2),
-            Instruction::JnbJaeJnc { ip_inc8 } => display_jump!("jae", ip_inc8, 2),
-            Instruction::JnbeJa { ip_inc8 } => display_jump!("ja", ip_inc8, 2),
-            Instruction::JnpJpo { ip_inc8 } => display_jump!("jpo", ip_inc8, 2),
-            Instruction::Jno { ip_inc8 } => display_jump!("jno", ip_inc8, 2),
-            Instruction::Jns { ip_inc8 } => display_jump!("jns", ip_inc8, 2),
-            Instruction::Loop { ip_inc8 } => display_jump!("loop", ip_inc8, 2),
-            Instruction::LoopeLoopz { ip_inc8 } => display_jump!("loopz", ip_inc8, 2),
-            Instruction::LoopneLoopnz { ip_inc8 } => display_jump!("loopnz", ip_inc8, 2),
-            Instruction::Jcxz { ip_inc8 } => display_jump!("jcxz", ip_inc8, 2),
+            Instruction::JneJnz { ip_inc8 } => display_jump(f, "jnz", ip_inc8, 2),
+            Instruction::JeJz { ip_inc8 } => display_jump(f, "jz", ip_inc8, 2),
+            Instruction::JlJnge { ip_inc8 } => display_jump(f, "jl", ip_inc8, 2),
+            Instruction::JleJng { ip_inc8 } => display_jump(f, "jle", ip_inc8, 2),
+            Instruction::JbJnaeJc { ip_inc8 } => display_jump(f, "jb", ip_inc8, 2),
+            Instruction::JbeJna { ip_inc8 } => display_jump(f, "jbe", ip_inc8, 2),
+            Instruction::JpJpe { ip_inc8 } => display_jump(f, "jp", ip_inc8, 2),
+            Instruction::Jo { ip_inc8 } => display_jump(f, "jo", ip_inc8, 2),
+            Instruction::Js { ip_inc8 } => display_jump(f, "js", ip_inc8, 2),
+            Instruction::JnlJge { ip_inc8 } => display_jump(f, "jge", ip_inc8, 2),
+            Instruction::JnleJg { ip_inc8 } => display_jump(f, "jg", ip_inc8, 2),
+            Instruction::JnbJaeJnc { ip_inc8 } => display_jump(f, "jae", ip_inc8, 2),
+            Instruction::JnbeJa { ip_inc8 } => display_jump(f, "ja", ip_inc8, 2),
+            Instruction::JnpJpo { ip_inc8 } => display_jump(f, "jpo", ip_inc8, 2),
+            Instruction::Jno { ip_inc8 } => display_jump(f, "jno", ip_inc8, 2),
+            Instruction::Jns { ip_inc8 } => display_jump(f, "jns", ip_inc8, 2),
+            Instruction::Loop { ip_inc8 } => display_jump(f, "loop", ip_inc8, 2),
+            Instruction::LoopeLoopz { ip_inc8 } => display_jump(f, "loopz", ip_inc8, 2),
+            Instruction::LoopneLoopnz { ip_inc8 } => display_jump(f, "loopnz", ip_inc8, 2),
+            Instruction::Jcxz { ip_inc8 } => display_jump(f, "jcxz", ip_inc8, 2),
 
             Instruction::Int { interrupt_type } => write!(f, "int {}", interrupt_type),
             Instruction::Int3 => write!(f, "int3"),
@@ -1081,7 +1104,7 @@ impl ::std::fmt::Display for PrefixedInstruction {
             Instruction::Esc {
                 external_opcode,
                 rm,
-            } => write!(f, "esc {}, {}", external_opcode, rm!(rm)),
+            } => write!(f, "esc {}, {}", external_opcode, prm(rm)),
         }
     }
 }
@@ -1092,19 +1115,17 @@ mod tests {
 
     #[test]
     fn print_sizes() {
-        macro_rules! print_size {
-            ($name:ident) => {
-                println!(
-                    "{} - size {} align {}",
-                    ::std::any::type_name::<$name>(),
-                    ::std::mem::size_of::<$name>(),
-                    ::std::mem::align_of::<$name>()
-                );
-            };
+        fn print_size<T>() {
+            println!(
+                "{} - size {} align {}",
+                ::std::any::type_name::<T>(),
+                ::std::mem::size_of::<T>(),
+                ::std::mem::align_of::<T>()
+            );
         }
-        print_size!(RegOperand);
-        print_size!(MemAddressingMode);
-        print_size!(RegMemOperand);
-        print_size!(Instruction);
+        print_size::<RegOperand>();
+        print_size::<MemAddressingMode>();
+        print_size::<RegMemOperand>();
+        print_size::<Instruction>();
     }
 }

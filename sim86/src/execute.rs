@@ -304,26 +304,14 @@ impl MachineState {
 
                         let (r, cf) = u8::overflowing_sub(a, b);
                         let (_, of) = i8::overflowing_sub(a as i8, b as i8);
-                        self.write_cf(cf);
-                        self.write_of(of);
-                        self.write_sf((r as i8) < 0);
-                        self.write_pf((r as u8).count_ones() % 2 == 0);
-                        self.write_zf(r == 0);
-
-                        self.write_af(compute_af!(a, b, r));
+                        self.write_flags_u8(a, b, r, cf, of);
                     }
                     (RegOperand::Reg16(reg), ByteOrWord::Word(b)) => {
                         let a = self.read_word_reg(reg);
 
                         let (r, cf) = u16::overflowing_sub(a, b);
                         let (_, of) = i16::overflowing_sub(a as i16, b as i16);
-                        self.write_cf(cf);
-                        self.write_of(of);
-                        self.write_sf((r as i16) < 0);
-                        self.write_pf((r as u8).count_ones() % 2 == 0);
-                        self.write_zf(r == 0);
-
-                        self.write_af(compute_af!(a, b, r));
+                        self.write_flags_u16(a, b, r, cf, of);
                     }
 
                     (RegOperand::Reg8(_), ByteOrWord::Word(_)) => unreachable!(),
@@ -560,7 +548,7 @@ impl MachineState {
         self.write_cf(cf);
         self.write_of(of);
         self.write_sf((r as i8) < 0);
-        self.write_pf((r as u8).count_ones() % 2 == 0); // Note that PF only examines the lower 8 bits (Page 2-35)
+        self.write_pf(r.count_ones() % 2 == 0);
         self.write_zf(r == 0);
         self.write_af(compute_af!(a, b, r));
     }
@@ -703,7 +691,7 @@ impl ::std::fmt::Display for Flags {
 }
 
 impl MachineStateDiff {
-    pub fn diff<F: FnMut(MachineStateDiff) -> ()>(
+    pub fn diff<F: FnMut(MachineStateDiff)>(
         include_ip_diff: bool,
         prev_state: &MachineState,
         next_state: &MachineState,
