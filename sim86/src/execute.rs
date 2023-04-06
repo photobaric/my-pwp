@@ -767,4 +767,146 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_of_formula() {
+        pub fn compute_of_correctly(a: u8, b: u8) -> bool {
+            let (_, of) = i8::overflowing_add(a as i8, b as i8);
+            of
+        }
+
+        // Truth table for the 8th bit:
+        // a b r c
+        // 0 0 0 0
+        // 0 0 1 1
+        // 0 1 0 0
+        // 0 1 1 0
+        // 1 0 0 0
+        // 1 0 1 0
+        // 1 1 0 1
+        // 1 1 1 0
+        //
+        // LLVM output:
+        //
+        // compute_of_truth_table:
+        // lea     ecx, [rsi + rdi]
+        // mov     eax, esi
+        // or      al, dil
+        // and     sil, dil
+        // xor     al, sil
+        // not     al
+        // and     al, cl
+        // xor     al, sil
+        // shr     al, 7
+        // ret
+        pub fn compute_of_truth_table(a: u8, b: u8) -> bool {
+            let r = u8::wrapping_add(a, b);
+            ((!a & !b & r) | (a & b & !r)) & 0x80 != 0
+        }
+
+        // LLVM output:
+        //
+        // compute_of_formula:
+        // lea     eax, [rsi + rdi]
+        // xor     al, dil
+        // mov     ecx, edi
+        // xor     cl, sil
+        // not     cl
+        // and     al, cl
+        // shr     al, 7
+        // ret
+        pub fn compute_of_formula(a: u8, b: u8) -> bool {
+            let r = u8::wrapping_add(a, b);
+            (!(a ^ b) & (a ^ r)) & 0x80 != 0
+        }
+
+        for a in 0x00u8..=0xFFu8 {
+            for b in 0x00u8..=0xFFu8 {
+                let of = compute_of_correctly(a, b);
+                let of1 = compute_of_truth_table(a, b);
+                let of2 = compute_of_formula(a, b);
+                assert_eq!(
+                    of, of1,
+                    "found disagreement for truth table {:#06b} {:#06b}",
+                    a, b
+                );
+                assert_eq!(
+                    of, of2,
+                    "found disagreement for formula {:#06b} {:#06b}",
+                    a, b
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_cf_formula() {
+        pub fn compute_cf_correctly(a: u8, b: u8) -> bool {
+            let (_, cf) = u8::overflowing_add(a, b);
+            cf
+        }
+
+        // Truth table for the 8th bit:
+        // a b r c
+        // 0 0 0 0
+        // 0 0 1 0
+        // 0 1 0 1
+        // 0 1 1 0
+        // 1 0 0 1
+        // 1 0 1 0
+        // 1 1 0 1
+        // 1 1 1 1
+        //
+        // LLVM is super smart and turns this naive truth table encoding into 5 boolean ops:
+        //
+        // compute_cf_truth_table:
+        // lea     eax, [rsi + rdi]
+        // mov     ecx, esi
+        // xor     cl, dil
+        // not     al
+        // and     al, cl
+        // and     sil, dil
+        // or      al, sil
+        // shr     al, 7
+        // ret
+        pub fn compute_cf_truth_table(a: u8, b: u8) -> bool {
+            let r = u8::wrapping_add(a, b);
+            ((!a & b & !r) | (a & !b & !r) | (a & b & !r) | (a & b & r)) & 0x80 != 0
+        }
+
+        // LLVM output:
+        //
+        // compute_cf_formula:
+        // lea     eax, [rsi + rdi]
+        // mov     ecx, esi
+        // or      cl, dil
+        // not     al
+        // and     al, cl
+        // and     sil, dil
+        // or      al, sil
+        // shr     al, 7
+        // ret
+        pub fn compute_cf_formula(a: u8, b: u8) -> bool {
+            let r = u8::wrapping_add(a, b);
+            (((a | b) & !r) | (a & b)) & 0x80 != 0
+        }
+
+        for a in 0x00u8..=0xFFu8 {
+            for b in 0x00u8..=0xFFu8 {
+                let cf = compute_cf_correctly(a, b);
+                let cf1 = compute_cf_truth_table(a, b);
+                let cf2 = compute_cf_formula(a, b);
+                assert_eq!(
+                    cf, cf1,
+                    "found disagreement for truth table {:#06b} {:#06b}",
+                    a, b
+                );
+                assert_eq!(
+                    cf, cf2,
+                    "found disagreement for formula {:#06b} {:#06b}",
+                    a, b
+                );
+            }
+        }
+    }
 }
