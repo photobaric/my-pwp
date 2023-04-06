@@ -10,21 +10,26 @@ pub struct MachineState {
     pub gprs: [u16; 8],
     pub srs: [u16; 4],
     pub ip_reg: u16,
-    pub flags_reg: u16,
+    pub flags_reg: Flags,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Flags(u16);
 
 macro_rules! rw_flag {
     ($read_flag_fn:ident, $write_flag_fn:ident, $bitpos:literal) => {
-        pub fn $read_flag_fn(flags: u16) -> bool {
-            flags & (1 << $bitpos) != 0
+        #[inline(always)]
+        pub fn $read_flag_fn(&self) -> bool {
+            self.0 & (1 << $bitpos) != 0
         }
 
+        #[inline(always)]
         pub fn $write_flag_fn(&mut self, flag: bool) {
             let flag: u16 = flag.into();
             // TODO(photobaric): Need two dependent ops?
             // see https://stackoverflow.com/questions/47981/how-do-i-set-clear-and-toggle-a-single-bit
-            self.flags_reg &= !(1 << $bitpos);
-            self.flags_reg |= (flag << $bitpos);
+            self.0 &= !(1 << $bitpos);
+            self.0 |= (flag << $bitpos);
         }
     };
 }
@@ -46,6 +51,37 @@ macro_rules! compute_af {
         // which is implemented as two XOR gates.
         ($a ^ $b ^ $r) & 0b10000 != 0
     };
+}
+
+impl Flags {
+    rw_flag!(read_cf, write_cf, 0);
+    rw_flag!(read_pf, write_pf, 2);
+    rw_flag!(read_af, write_af, 4);
+    rw_flag!(read_zf, write_zf, 6);
+    rw_flag!(read_sf, write_sf, 7);
+
+    rw_flag!(read_tf, write_tf, 8);
+    rw_flag!(read_if, write_if, 9);
+    rw_flag!(read_df, write_df, 10);
+    rw_flag!(read_of, write_of, 11);
+
+    fn write_flags_u8(&mut self, a: u8, b: u8, r: u8, cf: bool, of: bool) {
+        self.write_cf(cf);
+        self.write_of(of);
+        self.write_sf((r as i8) < 0);
+        self.write_pf(r.count_ones() % 2 == 0);
+        self.write_zf(r == 0);
+        self.write_af(compute_af!(a, b, r));
+    }
+
+    fn write_flags_u16(&mut self, a: u16, b: u16, r: u16, cf: bool, of: bool) {
+        self.write_cf(cf);
+        self.write_of(of);
+        self.write_sf((r as i16) < 0);
+        self.write_pf((r as u8).count_ones() % 2 == 0); // Note that PF only examines the lower 8 bits (Page 2-35)
+        self.write_zf(r == 0);
+        self.write_af(compute_af!(a, b, r));
+    }
 }
 
 impl MachineState {
@@ -139,7 +175,7 @@ impl MachineState {
                                 let (r, cf) = u8::overflowing_add(a, b);
                                 let (_, of) = i8::overflowing_add(a as i8, b as i8);
                                 state.write_byte_reg(dst_reg, r);
-                                state.write_flags_u8(a, b, r, cf, of);
+                                state.flags_reg.write_flags_u8(a, b, r, cf, of);
                             }
                             (RegOperand::Reg16(dst_reg), RegOperand::Reg16(src_reg)) => {
                                 let a = state.read_word_reg(dst_reg);
@@ -148,7 +184,7 @@ impl MachineState {
                                 let (r, cf) = u16::overflowing_add(a, b);
                                 let (_, of) = i16::overflowing_add(a as i16, b as i16);
                                 state.write_word_reg(dst_reg, r);
-                                state.write_flags_u16(a, b, r, cf, of);
+                                state.flags_reg.write_flags_u16(a, b, r, cf, of);
                             }
 
                             (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
@@ -171,7 +207,7 @@ impl MachineState {
                         let (r, cf) = u8::overflowing_add(a, b);
                         let (_, of) = i8::overflowing_add(a as i8, b as i8);
                         self.write_byte_reg(reg, r);
-                        self.write_flags_u8(a, b, r, cf, of);
+                        self.flags_reg.write_flags_u8(a, b, r, cf, of);
                     }
                     (RegOperand::Reg16(reg), ByteOrWord::Word(b)) => {
                         let a = self.read_word_reg(reg);
@@ -179,7 +215,7 @@ impl MachineState {
                         let (r, cf) = u16::overflowing_add(a, b);
                         let (_, of) = i16::overflowing_add(a as i16, b as i16);
                         self.write_word_reg(reg, r);
-                        self.write_flags_u16(a, b, r, cf, of);
+                        self.flags_reg.write_flags_u16(a, b, r, cf, of);
                     }
 
                     (RegOperand::Reg8(_), ByteOrWord::Word(_)) => unreachable!(),
@@ -207,7 +243,7 @@ impl MachineState {
                                 let (r, cf) = u8::overflowing_sub(a, b);
                                 let (_, of) = i8::overflowing_sub(a as i8, b as i8);
                                 state.write_byte_reg(dst_reg, r);
-                                state.write_flags_u8(a, b, r, cf, of);
+                                state.flags_reg.write_flags_u8(a, b, r, cf, of);
                             }
                             (RegOperand::Reg16(dst_reg), RegOperand::Reg16(src_reg)) => {
                                 let a = state.read_word_reg(dst_reg);
@@ -216,7 +252,7 @@ impl MachineState {
                                 let (r, cf) = u16::overflowing_sub(a, b);
                                 let (_, of) = i16::overflowing_sub(a as i16, b as i16);
                                 state.write_word_reg(dst_reg, r);
-                                state.write_flags_u16(a, b, r, cf, of);
+                                state.flags_reg.write_flags_u16(a, b, r, cf, of);
                             }
 
                             (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
@@ -239,7 +275,7 @@ impl MachineState {
                         let (r, cf) = u8::overflowing_sub(a, b);
                         let (_, of) = i8::overflowing_sub(a as i8, b as i8);
                         self.write_byte_reg(reg, r);
-                        self.write_flags_u8(a, b, r, cf, of);
+                        self.flags_reg.write_flags_u8(a, b, r, cf, of);
                     }
                     (RegOperand::Reg16(reg), ByteOrWord::Word(b)) => {
                         let a = self.read_word_reg(reg);
@@ -247,7 +283,7 @@ impl MachineState {
                         let (r, cf) = u16::overflowing_sub(a, b);
                         let (_, of) = i16::overflowing_sub(a as i16, b as i16);
                         self.write_word_reg(reg, r);
-                        self.write_flags_u16(a, b, r, cf, of);
+                        self.flags_reg.write_flags_u16(a, b, r, cf, of);
                     }
 
                     (RegOperand::Reg8(_), ByteOrWord::Word(_)) => unreachable!(),
@@ -274,7 +310,7 @@ impl MachineState {
 
                                 let (r, cf) = u8::overflowing_sub(a, b);
                                 let (_, of) = i8::overflowing_sub(a as i8, b as i8);
-                                state.write_flags_u8(a, b, r, cf, of);
+                                state.flags_reg.write_flags_u8(a, b, r, cf, of);
                             }
                             (RegOperand::Reg16(dst_reg), RegOperand::Reg16(src_reg)) => {
                                 let a = state.read_word_reg(dst_reg);
@@ -282,7 +318,7 @@ impl MachineState {
 
                                 let (r, cf) = u16::overflowing_sub(a, b);
                                 let (_, of) = i16::overflowing_sub(a as i16, b as i16);
-                                state.write_flags_u16(a, b, r, cf, of);
+                                state.flags_reg.write_flags_u16(a, b, r, cf, of);
                             }
 
                             (RegOperand::Reg8(_), RegOperand::Reg16(_)) => unreachable!(),
@@ -304,14 +340,14 @@ impl MachineState {
 
                         let (r, cf) = u8::overflowing_sub(a, b);
                         let (_, of) = i8::overflowing_sub(a as i8, b as i8);
-                        self.write_flags_u8(a, b, r, cf, of);
+                        self.flags_reg.write_flags_u8(a, b, r, cf, of);
                     }
                     (RegOperand::Reg16(reg), ByteOrWord::Word(b)) => {
                         let a = self.read_word_reg(reg);
 
                         let (r, cf) = u16::overflowing_sub(a, b);
                         let (_, of) = i16::overflowing_sub(a as i16, b as i16);
-                        self.write_flags_u16(a, b, r, cf, of);
+                        self.flags_reg.write_flags_u16(a, b, r, cf, of);
                     }
 
                     (RegOperand::Reg8(_), ByteOrWord::Word(_)) => unreachable!(),
@@ -322,24 +358,24 @@ impl MachineState {
 
             // See Table 2-15 on Page 2-46
             Instruction::JeJz { ip_inc8 } => {
-                let zf = MachineState::read_zf(self.flags_reg);
+                let zf = self.flags_reg.read_zf();
                 let condition = zf;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::JlJnge { ip_inc8 } => {
-                let sf = MachineState::read_sf(self.flags_reg);
-                let of = MachineState::read_of(self.flags_reg);
+                let sf = self.flags_reg.read_sf();
+                let of = self.flags_reg.read_of();
                 let condition = sf ^ of;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::JleJng { ip_inc8 } => {
-                let sf = MachineState::read_sf(self.flags_reg);
-                let of = MachineState::read_of(self.flags_reg);
-                let zf = MachineState::read_zf(self.flags_reg);
+                let sf = self.flags_reg.read_sf();
+                let of = self.flags_reg.read_of();
+                let zf = self.flags_reg.read_zf();
                 let condition = (sf ^ of) || zf;
                 if condition {
                     self.ip_inc8(ip_inc8);
@@ -347,60 +383,60 @@ impl MachineState {
             }
             // Note that Table 2-15 lists JC separately for some reason
             Instruction::JbJnaeJc { ip_inc8 } => {
-                let cf = MachineState::read_cf(self.flags_reg);
+                let cf = self.flags_reg.read_cf();
                 let condition = cf;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::JbeJna { ip_inc8 } => {
-                let cf = MachineState::read_cf(self.flags_reg);
-                let zf = MachineState::read_zf(self.flags_reg);
+                let cf = self.flags_reg.read_cf();
+                let zf = self.flags_reg.read_zf();
                 let condition = cf || zf;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::JpJpe { ip_inc8 } => {
-                let pf = MachineState::read_pf(self.flags_reg);
+                let pf = self.flags_reg.read_pf();
                 let condition = pf;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::Jo { ip_inc8 } => {
-                let of = MachineState::read_of(self.flags_reg);
+                let of = self.flags_reg.read_of();
                 let condition = of;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::Js { ip_inc8 } => {
-                let sf = MachineState::read_sf(self.flags_reg);
+                let sf = self.flags_reg.read_sf();
                 let condition = sf;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::JneJnz { ip_inc8 } => {
-                let zf = MachineState::read_zf(self.flags_reg);
+                let zf = self.flags_reg.read_zf();
                 let condition = !zf;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::JnlJge { ip_inc8 } => {
-                let sf = MachineState::read_sf(self.flags_reg);
-                let of = MachineState::read_of(self.flags_reg);
+                let sf = self.flags_reg.read_sf();
+                let of = self.flags_reg.read_of();
                 let condition = !(sf ^ of);
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::JnleJg { ip_inc8 } => {
-                let sf = MachineState::read_sf(self.flags_reg);
-                let of = MachineState::read_of(self.flags_reg);
-                let zf = MachineState::read_zf(self.flags_reg);
+                let sf = self.flags_reg.read_sf();
+                let of = self.flags_reg.read_of();
+                let zf = self.flags_reg.read_zf();
                 let condition = !((sf ^ of) || zf);
                 if condition {
                     self.ip_inc8(ip_inc8);
@@ -408,36 +444,36 @@ impl MachineState {
             }
             // Note that Table 2-15 lists JNC separately for some reason
             Instruction::JnbJaeJnc { ip_inc8 } => {
-                let cf = MachineState::read_cf(self.flags_reg);
+                let cf = self.flags_reg.read_cf();
                 let condition = !cf;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::JnbeJa { ip_inc8 } => {
-                let cf = MachineState::read_cf(self.flags_reg);
-                let zf = MachineState::read_zf(self.flags_reg);
+                let cf = self.flags_reg.read_cf();
+                let zf = self.flags_reg.read_zf();
                 let condition = !(cf || zf);
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::JnpJpo { ip_inc8 } => {
-                let pf = MachineState::read_pf(self.flags_reg);
+                let pf = self.flags_reg.read_pf();
                 let condition = !pf;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::Jno { ip_inc8 } => {
-                let of = MachineState::read_of(self.flags_reg);
+                let of = self.flags_reg.read_of();
                 let condition = !of;
                 if condition {
                     self.ip_inc8(ip_inc8);
                 }
             }
             Instruction::Jns { ip_inc8 } => {
-                let sf = MachineState::read_sf(self.flags_reg);
+                let sf = self.flags_reg.read_sf();
                 let condition = !sf;
                 if condition {
                     self.ip_inc8(ip_inc8);
@@ -458,7 +494,7 @@ impl MachineState {
                 let cx = cx.wrapping_sub(1);
                 self.write_word_reg(WordReg::CX, cx);
 
-                let zf = MachineState::read_zf(self.flags_reg);
+                let zf = self.flags_reg.read_zf();
 
                 let condition = cx != 0 && zf;
                 if condition {
@@ -470,7 +506,7 @@ impl MachineState {
                 let cx = cx.wrapping_sub(1);
                 self.write_word_reg(WordReg::CX, cx);
 
-                let zf = MachineState::read_zf(self.flags_reg);
+                let zf = self.flags_reg.read_zf();
 
                 let condition = cx != 0 && !zf;
                 if condition {
@@ -499,6 +535,7 @@ impl MachineState {
         self.gprs[word_reg as usize] = word;
     }
 
+    #[inline]
     pub fn read_byte_reg(&self, byte_reg: ByteReg) -> u8 {
         let byte_reg: u8 = byte_reg as u8;
         let gpr = byte_reg & 0b11;
@@ -510,6 +547,7 @@ impl MachineState {
         }
     }
 
+    #[inline]
     pub fn write_byte_reg(&mut self, byte_reg: ByteReg, byte: u8) {
         let byte_reg: u8 = byte_reg as u8;
         let gpr = byte_reg & 0b11;
@@ -533,43 +571,17 @@ impl MachineState {
         self.srs[segment_reg as usize] = word;
     }
 
-    rw_flag!(read_cf, write_cf, 0);
-    rw_flag!(read_pf, write_pf, 2);
-    rw_flag!(read_af, write_af, 4);
-    rw_flag!(read_zf, write_zf, 6);
-    rw_flag!(read_sf, write_sf, 7);
-
-    rw_flag!(read_tf, write_tf, 8);
-    rw_flag!(read_if, write_if, 9);
-    rw_flag!(read_df, write_df, 10);
-    rw_flag!(read_of, write_of, 11);
-
-    fn write_flags_u8(self: &mut MachineState, a: u8, b: u8, r: u8, cf: bool, of: bool) {
-        self.write_cf(cf);
-        self.write_of(of);
-        self.write_sf((r as i8) < 0);
-        self.write_pf(r.count_ones() % 2 == 0);
-        self.write_zf(r == 0);
-        self.write_af(compute_af!(a, b, r));
-    }
-
-    fn write_flags_u16(self: &mut MachineState, a: u16, b: u16, r: u16, cf: bool, of: bool) {
-        self.write_cf(cf);
-        self.write_of(of);
-        self.write_sf((r as i16) < 0);
-        self.write_pf((r as u8).count_ones() % 2 == 0); // Note that PF only examines the lower 8 bits (Page 2-35)
-        self.write_zf(r == 0);
-        self.write_af(compute_af!(a, b, r));
-    }
-
+    #[inline(always)]
     pub fn read_ip(&self) -> u16 {
         self.ip_reg
     }
 
+    #[inline(always)]
     pub fn write_ip(&mut self, ip: u16) {
         self.ip_reg = ip;
     }
 
+    #[inline(always)]
     pub fn ip_inc8(&mut self, ip_inc8: i8) {
         let ip_inc: i16 = ip_inc8.into();
         self.ip_reg = self.ip_reg.wrapping_add_signed(ip_inc);
@@ -606,7 +618,7 @@ impl MachineState {
             }
             Reg::FlagsReg => {
                 let value = self.flags_reg;
-                writeln!(output, "flags: {}", Flags(value))?;
+                writeln!(output, "flags: {}", value)?;
             }
         }
         Ok(())
@@ -627,7 +639,7 @@ impl MachineState {
 
         writeln!(output, "ip: {}", self.ip_reg)?;
 
-        writeln!(output, "flags: {}", Flags(self.flags_reg))?;
+        writeln!(output, "flags: {}", self.flags_reg)?;
 
         Ok(())
     }
@@ -639,55 +651,6 @@ pub enum MachineStateDiff {
     Sr(SegmentReg, u16, u16),
     IpReg(u16, u16),
     FlagsReg(u16, u16),
-}
-
-impl ::std::fmt::Display for MachineStateDiff {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MachineStateDiff::Gpr(gpr, prev, next) => write!(f, "{}:{:#x}->{:#x}", gpr, prev, next),
-            MachineStateDiff::Sr(sr, prev, next) => write!(f, "{}:{:#x}->{:#x}", sr, prev, next),
-            MachineStateDiff::IpReg(prev, next) => write!(f, "ip:{:#x}->{:#x}", prev, next),
-            MachineStateDiff::FlagsReg(prev, next) => {
-                write!(f, "flags:{}->{}", Flags(*prev), Flags(*next))
-            }
-        }
-    }
-}
-
-pub struct Flags(u16);
-
-impl ::std::fmt::Display for Flags {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let flags = self.0;
-        if MachineState::read_cf(flags) {
-            write!(f, "C")?;
-        }
-        if MachineState::read_pf(flags) {
-            write!(f, "P")?;
-        }
-        if MachineState::read_af(flags) {
-            write!(f, "A")?;
-        }
-        if MachineState::read_zf(flags) {
-            write!(f, "Z")?;
-        }
-        if MachineState::read_sf(flags) {
-            write!(f, "S")?;
-        }
-        if MachineState::read_tf(flags) {
-            write!(f, "T")?;
-        }
-        if MachineState::read_if(flags) {
-            write!(f, "I")?;
-        }
-        if MachineState::read_df(flags) {
-            write!(f, "D")?;
-        }
-        if MachineState::read_of(flags) {
-            write!(f, "O")?;
-        }
-        std::fmt::Result::Ok(())
-    }
 }
 
 impl MachineStateDiff {
@@ -727,10 +690,56 @@ impl MachineStateDiff {
             let prev_flags = prev_state.flags_reg;
             let next_flags = next_state.flags_reg;
             if prev_flags != next_flags {
-                let diff = MachineStateDiff::FlagsReg(prev_flags, next_flags);
+                let diff = MachineStateDiff::FlagsReg(prev_flags.0, next_flags.0);
                 process_diff(diff);
             }
         }
+    }
+}
+
+impl ::std::fmt::Display for MachineStateDiff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MachineStateDiff::Gpr(gpr, prev, next) => write!(f, "{}:{:#x}->{:#x}", gpr, prev, next),
+            MachineStateDiff::Sr(sr, prev, next) => write!(f, "{}:{:#x}->{:#x}", sr, prev, next),
+            MachineStateDiff::IpReg(prev, next) => write!(f, "ip:{:#x}->{:#x}", prev, next),
+            MachineStateDiff::FlagsReg(prev, next) => {
+                write!(f, "flags:{}->{}", Flags(*prev), Flags(*next))
+            }
+        }
+    }
+}
+
+impl ::std::fmt::Display for Flags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.read_cf() {
+            write!(f, "C")?;
+        }
+        if self.read_pf() {
+            write!(f, "P")?;
+        }
+        if self.read_af() {
+            write!(f, "A")?;
+        }
+        if self.read_zf() {
+            write!(f, "Z")?;
+        }
+        if self.read_sf() {
+            write!(f, "S")?;
+        }
+        if self.read_tf() {
+            write!(f, "T")?;
+        }
+        if self.read_if() {
+            write!(f, "I")?;
+        }
+        if self.read_df() {
+            write!(f, "D")?;
+        }
+        if self.read_of() {
+            write!(f, "O")?;
+        }
+        std::fmt::Result::Ok(())
     }
 }
 
