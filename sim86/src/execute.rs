@@ -34,6 +34,17 @@ macro_rules! rw_flag {
     };
 }
 
+macro_rules! compute_pf {
+    ($r:ident) => {
+        // This gets optimized by LLVM into a single setp instruction:
+        // https://godbolt.org/z/Y31E7jh7T
+        // This means we are implementing the parity flag using the parity flag itself!
+        //
+        // Note that PF only examines the lower 8 bits (Page 2-35)
+        ($r as u8).count_ones() % 2 == 0
+    };
+}
+
 macro_rules! compute_af {
     ($a:ident, $b:ident, $r:ident) => {
         // AF is basically the CF but looking at the 4th bit instead of the 8th bit.
@@ -69,7 +80,7 @@ impl Flags {
         self.write_cf(cf);
         self.write_of(of);
         self.write_sf((r as i8) < 0);
-        self.write_pf(r.count_ones() % 2 == 0);
+        self.write_pf(compute_pf!(r));
         self.write_zf(r == 0);
         self.write_af(compute_af!(a, b, r));
     }
@@ -78,7 +89,7 @@ impl Flags {
         self.write_cf(cf);
         self.write_of(of);
         self.write_sf((r as i16) < 0);
-        self.write_pf((r as u8).count_ones() % 2 == 0); // Note that PF only examines the lower 8 bits (Page 2-35)
+        self.write_pf(compute_pf!(r));
         self.write_zf(r == 0);
         self.write_af(compute_af!(a, b, r));
     }
@@ -747,23 +758,23 @@ impl ::std::fmt::Display for Flags {
 mod tests {
     #[test]
     fn test_af_formula() {
-        pub fn compute_af_v1(a: u8, b: u8) -> bool {
-            let (res, _) = u8::overflowing_add(a, b);
-            compute_af!(a, b, res)
-        }
-
-        pub fn compute_af_v2(a: u8, b: u8) -> bool {
+        pub fn compute_af_correctly(a: u8, b: u8) -> bool {
             let a = a << 4;
             let b = b << 4;
             let (_, cf) = u8::overflowing_add(a, b);
             cf
         }
 
+        pub fn compute_af_formula(a: u8, b: u8) -> bool {
+            let (res, _) = u8::overflowing_add(a, b);
+            compute_af!(a, b, res)
+        }
+
         for a in 0x00u8..=0xFFu8 {
             for b in 0x00u8..=0xFFu8 {
-                let af1 = compute_af_v1(a, b);
-                let af2 = compute_af_v2(a, b);
-                assert_eq!(af1, af2, "found disagreement {:#06b} {:#06b}", a, b);
+                let af = compute_af_correctly(a, b);
+                let af1 = compute_af_formula(a, b);
+                assert_eq!(af, af1, "found disagreement {:#06b} {:#06b}", a, b);
             }
         }
     }
