@@ -1,7 +1,7 @@
 // https://www.computerenhance.com/p/efficient-dda-circle-outlines/comments
 //
 // Usage:
-// gcc -o circle-rasterizer circle-rasterizer.c && ./circle-rasterizer > circle.pbm && open circle.pbm
+// clang -o circle-rasterizer circle-rasterizer.c && ./circle-rasterizer > circle.pbm && open circle.pbm
 
 #include <stdio.h>
 
